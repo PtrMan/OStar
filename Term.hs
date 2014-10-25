@@ -12,66 +12,20 @@ data TermNode =
 	LeafTag {leafTag :: String} |
 	LeafVariable {variable :: VariableData} |
 	Branch {tree :: TermData}
-
---instance Ord TermNode where
---	(Branch (TermData tagA termALeft termARight)) <= (Branch (TermData tagB termBLeft termBRight)) =
---		countItemsInTree (Branch (TermData tagA termALeft termARight)) <= countItemsInTree (Branch (TermData tagB termBLeft termBRight))
---	(LeafTag tagL) <= (LeafTag tagR) = tagL < tagR
---	(LeafVariable variableL) <= (LeafVariable variableR) = variableL <= variableR
---	_ <= _ = False
-instance Ord TermNode where
-	compare (Branch (TermData tagA termALeft termARight)) (Branch (TermData tagB termBLeft termBRight))
-		| countItemsInTree (Branch (TermData tagA termALeft termARight)) > countItemsInTree (Branch (TermData tagB termBLeft termBRight)) = GT
-		| tagA == tagB && termALeft == termBRight && termARight == termBRight = EQ
-		| True = LT
-	compare (LeafTag left) (LeafTag right)
-		| left > right = GT
-		| left == right = EQ
-		| True = LT
-	compare (LeafVariable left) (LeafVariable right)
-		| left > right = GT
-		| left == right = EQ
-		| True = LT
-	compare (Branch _) (LeafTag _) = GT
-	compare (LeafTag _) (Branch _) = LT
-	compare (LeafVariable _) (LeafTag _) = GT
-	compare (LeafTag _) (LeafVariable _) = LT
-	compare (Branch _) (LeafVariable _) = GT
-	compare (LeafVariable _) (Branch _) = LT
+		deriving (Ord, Eq)
 
 instance Show TermNode where
   show (LeafTag x) = "<LeafTag " ++ show x ++ ">"
   show (LeafVariable x) = "<LeafVariable " ++ show x ++ ">"
   show (Branch x)    = "<Branch " ++ show x ++ ">"
 
--- TODO< left and right can also be terms >
-data TermData = TermData {
-	nodeTag :: String,
-	left :: TermNode,
-	right :: TermNode
-}
+data TermData = TermData { nodeTag :: String
+						 ,  left :: TermNode
+						 , right :: TermNode
+						 } deriving (Ord, Eq)
 
 instance Show TermData where
   show (TermData nodeTag delta tau) = "<TermData " ++ show nodeTag ++ " " ++ show delta ++ " " ++ show tau ++ ">"
-
-instance Eq TermData where 
-  x == y                =  areTermsEqual x y
-
-instance Eq TermNode where
-  x == y                = areTermNodeEqual x y
-
-areTermsEqual :: TermData -> TermData -> Bool
-areTermsEqual (TermData aNodeTag aLeft aRight) (TermData bNodeTag bLeft bRight) = aNodeTag == bNodeTag && aLeft == bLeft && aRight == bRight
-
-areTermNodeEqual :: TermNode -> TermNode -> Bool
-areTermNodeEqual (LeafVariable leafA) (LeafVariable leafB) = leafA == leafB
-areTermNodeEqual (LeafTag leafA) (LeafTag leafB) = leafA == leafB
-areTermNodeEqual (Branch leafA) (Branch leafB) = leafA == leafB
-areTermNodeEqual _ _ = False
-
-
-
-
 
 -- helper
 -- returns the nth element from a tree

@@ -18,25 +18,11 @@ data AxiomData = AxiomData {
 	tag :: AxiomTag, -- tau
 	t :: TermNode,
 	tTick :: TermNode
-}
+} deriving (Eq, Ord)
 
 -- NOTE< assumes the tag is equal >
 instance Show AxiomData where
   show (AxiomData tag t tTick) = "<AxiomData " ++ show tag ++ " " ++ show t ++ " " ++ show tTick ++ ">"
-
--- is a HACK, the version below doesn't work
-instance Ord AxiomData where
-	compare (AxiomData tagL tL tTickL) (AxiomData tagR tR tTickR) 
-		| tagL == tagR && tL == tR && tTickL == tTickR = EQ
-		| True = LT
-
--- | tagL > tagR = GT
--- | tL > tR = GT
--- | tTickL > tTickR = GT
-
-instance Eq AxiomData where
-  (AxiomData tag1 t1 tTick1) == (AxiomData tag2 t2 tTick2) = t1 == t2 && t1 == t2 && tTick1 == tTick2
-
 
 data VariableNameNotFoundException = VariableNameNotFoundException {
 	variablename :: String
@@ -384,7 +370,7 @@ data Agent = Agent {
 
 -- Definition 19
 -- Occam Function
-occamFunction :: Random.StdGen -> [Item] -> Agent -> (Agent, [AxiomData], [VariableData], [TermNode], [(AxiomData, Int              , Int    )], Set.Set TermNode)
+occamFunction :: Random.StdGen -> [Item] -> Agent -> (Agent, [AxiomData], [VariableData], [TermNode], [(AxiomData, Int              , Int    )], Set.Set TermNode, Set.Set AxiomData)
 occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilationCapacity accommodationCapacity) =
 	let
 		(random2, randomT1) = Random.split random
@@ -433,7 +419,7 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 		nextAgentT = Set.union agentT deltaTickTick
 		resultAgent = Agent nextAgentT nextAgentC workingMemoryCapacity assimilationCapacity accommodationCapacity
 	in
-		(resultAgent, Set.toList (memorizeFromListAndGetResultAsSet ipIn), Set.toList setOfVariables, subtreesFromIn, debug0, nextAgentC)
+		(resultAgent, Set.toList (memorizeFromListAndGetResultAsSet ipIn), Set.toList setOfVariables, subtreesFromIn, debug0, nextAgentC, delta1)
 	where
 		getAllSubtermFromItems :: [Item] -> [TermNode]
 		getAllSubtermFromItems items =
@@ -857,20 +843,20 @@ getStringOfItems items =
 test0 randomSeed =
 	let
 		itemListStep1 = [(Item Type (LeafTag "1") (LeafTag "Digit") 1), (Item Type (LeafTag "0") (LeafTag "Digit") 1), (Item Type (LeafTag "2") (LeafTag "Digit") 1)]
-		(resultAgent1, memorizedAxioms1, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
+		(resultAgent1, memorizedAxioms1, _, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 
 		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),     (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
-		(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
+		(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
 
 		(Agent agentT agentC _ _ _) = resultAgent2
 	in
-		(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug)
+		(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover)
 
 -- TODO< zetaAsList must be empty for the example >
 testPrint :: Int -> IO ()
 testPrint randomSeed =
 	let
-		(agentT, agentC, memorizedAxioms1, _, debugTerms, _, _) = test0 randomSeed
+		(agentT, agentC, memorizedAxioms1, _, debugTerms, _, _, afterCrossover) = test0 randomSeed
 	in
 		do
 			putStrLn "Agent T [Axioms]"
@@ -892,5 +878,7 @@ testPrint randomSeed =
 			putStrLn ""
 			putStr (getStringOfTerms (debugTerms))
 
+			putStrLn "AXIOMS AFTER CROSSOVER"
+			putStr (getStringOfAxioms (Set.toList afterCrossover))
 
 
