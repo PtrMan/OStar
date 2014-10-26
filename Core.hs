@@ -1,17 +1,18 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-import Term
-import VariableData
-import Item
-import AxiomTag
-
 import qualified System.Random as Random
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.List as List
 import Control.Exception
 import Data.Typeable
+
+import Term
+import VariableData
+import Item
+import AxiomTag
+import Misc
 
 
 data AxiomData = AxiomData {
@@ -257,7 +258,7 @@ calcIndividualPerformance    random           agent    items  =
 			| True                                                         = 0
 
 -- des take a random subtree from treeA and inserts it into a random position in treeB
--- Definition 15 (Corssover)
+-- Definition 15 (Crossover)
 
 -- <<works>>
 
@@ -278,6 +279,57 @@ crossover random treeA treeB =
 
 	in
 		replacedTree
+
+-- does a excessive crossover
+-- returns all combinations of crossover which are possible
+crossoverExcessive :: TermNode -> TermNode -> Set.Set TermNode
+crossoverExcessive treeA treeB =
+	let
+		treeASubterms = getAllSubtermAsSet treeA
+		treeBSubterms = getAllSubtermAsSet treeB
+
+		treeASubtermsAsList = Set.toList treeASubterms
+		treeBSubtermsAsList = Set.toList treeBSubterms
+
+		unionOfSetsOfCrossoverResult = Set.unions $ map (\iterationTerm -> getAllCrossoverOfTermWithTerms iterationTerm treeASubtermsAsList) treeBSubtermsAsList
+	in
+		unionOfSetsOfCrossoverResult
+	where
+		getAllCrossoverOfTermWithTerms :: TermNode -> [TermNode] -> Set.Set TermNode
+		getAllCrossoverOfTermWithTerms term terms =
+			let
+				numberOfItemsInTerm = countItemsInTree term
+				-- list with all possible number of the subterms of 'term'
+				numbersOfTermsInTerm = enumerateInt numberOfItemsInTerm
+
+				-- list with functions which replace nth subterm with the input
+				replaceNthInTreeFunctions = List.map (\chosenNumber -> replaceNthInTree chosenNumber term) numbersOfTermsInTerm
+
+				-- [(function which takes a term aand returns the tree with the replaced tree, term to apply)]
+				productsOfFunctionsAndApplyedTerms = combinatorialProduct replaceNthInTreeFunctions terms
+
+				resultTermsAsList = List.map applyFunction productsOfFunctionsAndApplyedTerms
+				resultTermsAsSet = Set.fromList resultTermsAsList
+			in
+				resultTermsAsSet
+			where
+				applyFunction :: (TermNode -> TermNode, TermNode) -> TermNode
+				applyFunction (func, term) = func term
+
+				-- applyFunction :: (TermNode -> TermNode) -> TermNode -> TermNode
+				-- applyFunction func term = func term
+
+
+		--getAllCrossoverOfTermWithTerms term terms = Set.unions $ List.map (getAllCrossoverOfTermTerm term) terms
+
+		--getAllCrossoverOfTermTerm :: TermNode -> TermNode -> Set.Set TermNode
+		--getAllCrossoverOfTermTerm a b =
+		--	let
+		--		numberOfItemsInA = countItemsInTree a
+		--		numberOfItemsInB = countItemsInTree b
+		--	in
+
+
 
 -- Definition 16
 -- Abstraction
@@ -394,9 +446,10 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 		-- as described we need to crosover nextAgentC
 		-- the trouble is that it need to be translated to axioms
 		-- we implement here a conversion from the crossover term to the axiom as follows
-		-- COULDBEWRONG
-		-- create eqi axiom for (left) input term and result term of the crossover
-		delta1 = Set.fromList (crossoverAndConvertToAxioms (Set.elems nextAgentC))
+		-- create eqal axiom for (left) input term and result term of the crossover
+		-- create type axiom for (left) input term and result term of the crossover
+		-- then filter for the complexity of the resulting axioms
+		delta1 = Set.fromList (crossoverAndConvertToAxioms accommodationCapacity (Set.elems nextAgentC))
 
 		-- abstract all items of In and union
 		abstractedInIn = abstractForListAsSet ipIn
@@ -495,21 +548,59 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 				mapHelper :: Maybe AxiomData -> AxiomData
 				mapHelper (Just axiom) = axiom
 
-		crossoverAndConvertToAxioms :: [TermNode] -> [AxiomData]
-		crossoverAndConvertToAxioms terms =
+		crossoverAndConvertToAxioms :: Int                   -> [TermNode] -> [AxiomData]
+		crossoverAndConvertToAxioms    accommodationCapacity    terms      =
 			let
-				infiniteListOfRandomGenerators = List.iterate (\x -> snd (Random.split x)) random
+				allTermsCrossedOverAsSet = excessiveCrossoverOfTermsAsSet terms
+				allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
 
-				-- ASK< should it include _all_ combinations?
-				combinationsOfTerms = combinatorialProduct terms
-				crossoverResult = zipWith (\x random -> crossover random (fst x) (snd x)) combinationsOfTerms infiniteListOfRandomGenerators
+				unfilteredAxioms = List.concat $ List.concat [
+									(map (\leftTerm -> makeAxiomsOfTerms Equi leftTerm allTermsCrossedOverAsList) terms),
+									(map (\leftTerm -> makeAxiomsOfTerms Type leftTerm allTermsCrossedOverAsList) terms)
+									]
+				
+				filteredList = List.filter filterForMaximalAccommodationCapacity unfilteredAxioms
+
+				-----------------------------------------------------------------------------------------------
+				-----------------------------------------------------------------------------------------------
+				-----------------------------------------------------------------------------------------------
+
+				--combinationsOfTerms = combinatorialProduct terms terms
+
+				--map (\x -> crossoverExcessive x)
+
+				--crossoverResult = zipWith (\x random -> crossover random (fst x) (snd x)) combinationsOfTerms infiniteListOfRandomGenerators
 				
 				-- convert to axioms
 				--  we zip because for the axiom we need the "orginal" term and the result of the crossover
-				zipedCombinationAndCrossover = zip combinationsOfTerms crossoverResult
-				result = map (\x -> AxiomData Equi (fst (fst x)) (snd x)) zipedCombinationAndCrossover
+				--zipedCombinationAndCrossover = zip combinationsOfTerms crossoverResult
+				--result = map (\x -> AxiomData Equi (fst (fst x)) (snd x)) zipedCombinationAndCrossover
 			in
-				result
+				filteredList
+			where
+				makeAxiomsOfTerms :: AxiomTag -> TermNode -> [TermNode] -> [AxiomData]
+				makeAxiomsOfTerms    tag         left        rightList  =
+					let
+						axiomsWithTag = map createAxiomWithTag $ combinatorialProduct [left] rightList
+					in
+						axiomsWithTag
+					where
+						createAxiomWithTag :: (TermNode, TermNode) -> AxiomData
+						createAxiomWithTag (left, right) = AxiomData tag left right
+
+				excessiveCrossoverOfTermsAsSet :: [TermNode] -> Set.Set TermNode
+				excessiveCrossoverOfTermsAsSet terms =
+					let
+						result = Set.unions $ map excessiveCrossoverOfTuple $ combinatorialProduct terms terms
+					in
+						result
+					where
+						excessiveCrossoverOfTuple :: (TermNode, TermNode) -> Set.Set TermNode
+						excessiveCrossoverOfTuple (a, b) = crossoverExcessive a b
+
+				filterForMaximalAccommodationCapacity :: AxiomData -> Bool
+				filterForMaximalAccommodationCapacity axiom = getTermSizeForAxiom axiom <= accommodationCapacity
+
 
 		-- helper function
 		abstractForListAsSet :: [Item] -> Set.Set AxiomData
@@ -586,42 +677,6 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 									resultTerm = replaceNthInTree index (LeafVariable chosenVariableData) term
 								in
 									resultTerm
-
-		crossoverOfAllTermsWithLimitOnSize :: [TermNode] -> Int   -> Random.StdGen -> [TermNode]
-		crossoverOfAllTermsWithLimitOnSize    terms         limit    random        =
-			let
-				crossedOverTerms = crossoverOfAllTerms terms
-				result = List.filter (\x -> (getTermSize x) <= limit) crossedOverTerms
-			in
-				result
-			where
-				crossoverOfAllTerms :: [TermNode] -> [TermNode]
-				crossoverOfAllTerms    inputList  =
-					let
-						combinatorialOfTerms = combinatorialProduct inputList
-
-						-- generator for an infinite list of different random number generators
-						infiniteListOfRandomGenerators = List.iterate (\x -> snd (Random.split x)) random
-					in
-						map mappingHelper (zip combinatorialOfTerms infiniteListOfRandomGenerators)
-					where
-						-- does a crossover of the terms
-						mappingHelper :: ((TermNode, TermNode), Random.StdGen) -> TermNode
-						mappingHelper ((termA, termB), random) = crossover random termA termB
-
-		-- helper
-		-- Is symetric and excessive
-		combinatorialProduct :: [TermNode] -> [(TermNode, TermNode)]
-		combinatorialProduct    []         = []
-		combinatorialProduct    inputList  =
-			let
-				singleLists = List.map internal inputList
-				resultList = List.concat singleLists
-			in
-				resultList
-			where
-				internal :: TermNode -> [(TermNode, TermNode)]
-				internal term = zip inputList (List.repeat term)
 
 		-- does the important work of the occam function
 		-- choses the best n candidates based on the priority ordering outlined in the paper

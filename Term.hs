@@ -69,15 +69,15 @@ takeNthFromTree selectedElement inputTree =
 
 -- <<works>>
 -- test
--- *Main> replaceNthInTreeInternal 2 0  (LeafTag "c") (Branch (TermData "*" (LeafTag "a") (LeafTag "b")))
+-- *Main> replaceNthInTreeInternal 2 0  (Branch (TermData "*" (LeafTag "a") (LeafTag "b"))) (LeafTag "c")
 -- (<Branch <TermData "*" <LeafTag "a"> <LeafTag "c">>>,-1)
--- *Main> replaceNthInTree 1  (LeafTag "c") (Branch (TermData "*" (LeafTag "a") (LeafTag "b")))
+-- *Main> replaceNthInTree 1  (Branch (TermData "*" (LeafTag "a") (LeafTag "b"))) (LeafTag "c") 
 -- <Branch <TermData "*" <LeafTag "c"> <LeafTag "b">>>
--- *Main> replaceNthInTree 0  (LeafTag "c") (Branch (TermData "*" (LeafTag "a") (LeafTag "b")))
+-- *Main> replaceNthInTree 0  (Branch (TermData "*" (LeafTag "a") (LeafTag "b"))) (LeafTag "c") 
 -- <LeafTag "c">
 
 replaceNthInTree :: Int -> TermNode -> TermNode -> TermNode
-replaceNthInTree selectedElement replacingTree inputTree =
+replaceNthInTree selectedElement inputTree replacingTree =
 	let
 		(result, _) = replaceNthInTreeInternal selectedElement 0 replacingTree inputTree
 	in
