@@ -181,3 +181,13 @@ getStringOfTerms terms =
 		stringOfTerms = map getStringOfTerm terms
 	in
 		List.concatMap (\x -> x ++ "\n") stringOfTerms
+
+getUnqiueNodeTagsOfTerm :: TermNode -> Set.Set String
+getUnqiueNodeTagsOfTerm (Branch (TermData tag left right)) = Set.unions [Set.fromList [tag], getUnqiueNodeTagsOfTerm left, getUnqiueNodeTagsOfTerm right]
+getUnqiueNodeTagsOfTerm _ = Set.empty
+
+getAllLeafTagsOfTerm :: TermNode -> Set.Set String
+getAllLeafTagsOfTerm (LeafTag tag) = Set.fromList [tag]
+getAllLeafTagsOfTerm (Branch (TermData _ left right)) = Set.union (getAllLeafTagsOfTerm left) (getAllLeafTagsOfTerm right)
+getAllLeafTagsOfTerm _ = Set.empty
+

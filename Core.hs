@@ -329,7 +329,62 @@ crossoverExcessive treeA treeB =
 		--		numberOfItemsInB = countItemsInTree b
 		--	in
 
+data Side = LeftSide | RightSide
 
+-- does a analyzing excessive crossover
+-- * search for all unique node tags
+-- * get all leafes
+-- * recombine branches of unique node tags with all possible instantiations of the saved leaves
+
+excessiveCrossover :: [TermNode] -> Int -> Set.Set TermNode
+excessiveCrossover terms maximalComplexity =
+	let
+		uniqueNodeTagsAsSet = Set.unions $ List.map getUnqiueNodeTagsOfTerm terms
+		uniqueLeafesAsSet = Set.unions $ List.map getAllLeafTagsOfTerm terms
+
+		resultTermsOfOnlyLeafesAsList = List.map createLeafFromTag $ Set.toList uniqueLeafesAsSet
+		uniqueNodeTagsAsList = Set.toList uniqueNodeTagsAsSet
+
+		remainingSteps = quot (maximalComplexity-1) 2 + 1
+		resultAsList = combinePossibleTermsRecursive remainingSteps resultTermsOfOnlyLeafesAsList resultTermsOfOnlyLeafesAsList uniqueNodeTagsAsList
+		resultAsSet = Set.fromList resultAsList
+	in
+		resultAsSet
+	where
+		-- is called iterativly to build bigger and bigger trees, which can be again be combined
+		-- this simplifies the algorithm and saves some calculation-time
+		generatePossibleCombinationsOfBiggerTermWithSmallerTerms :: [TermNode] -> [TermNode] -> [String] -> [TermNode]
+		generatePossibleCombinationsOfBiggerTermWithSmallerTerms biggerList leafList nodeTags = 
+			let
+				result = removeMultipleElements $ List.concat $ List.map generatePossibleCombinationsOfBiggerTermWithSmallerTerm leafList
+			in
+				result
+			where
+				-- uses variables of top function
+				generatePossibleCombinationsOfBiggerTermWithSmallerTerm :: TermNode -> [TermNode]
+				generatePossibleCombinationsOfBiggerTermWithSmallerTerm currentLeaf =
+					let
+						productOfTagAndBiggerTerm = combinatorialProduct biggerList nodeTags
+						resultListForLeft = List.map (\x -> createBranchWithTagAndTerm LeftSide x currentLeaf) productOfTagAndBiggerTerm
+						resultListForRight = List.map (\x -> createBranchWithTagAndTerm RightSide x currentLeaf) productOfTagAndBiggerTerm
+					in
+						resultListForLeft ++ resultListForRight
+					where
+						createBranchWithTagAndTerm :: Side -> (TermNode, String) -> TermNode -> TermNode
+						createBranchWithTagAndTerm LeftSide (a, tag) b = Branch (TermData tag a b)
+						createBranchWithTagAndTerm RightSide (a, tag) b = Branch (TermData tag b a)
+
+		createLeafFromTag :: String -> TermNode
+		createLeafFromTag tag = LeafTag tag
+
+		combinePossibleTermsRecursive :: Int -> [TermNode] -> [TermNode] -> [String] -> [TermNode]
+		combinePossibleTermsRecursive 0 _ _ _ = undefined
+		combinePossibleTermsRecursive 1 previousResult _ _ = previousResult
+		combinePossibleTermsRecursive remainingCounter previousResult leafTerms nodeTags =
+			let
+				possibleResultTrees = generatePossibleCombinationsOfBiggerTermWithSmallerTerms previousResult leafTerms nodeTags
+			in
+				combinePossibleTermsRecursive (remainingCounter-1) possibleResultTrees leafTerms nodeTags
 
 -- Definition 16
 -- Abstraction
@@ -551,7 +606,7 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 		crossoverAndConvertToAxioms :: Int                   -> [TermNode] -> [AxiomData]
 		crossoverAndConvertToAxioms    accommodationCapacity    terms      =
 			let
-				allTermsCrossedOverAsSet = excessiveCrossoverOfTermsAsSet terms
+				allTermsCrossedOverAsSet = excessiveCrossover terms (accommodationCapacity-1)
 				allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
 
 				unfilteredAxioms = List.concat $ List.concat [
@@ -579,14 +634,14 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 				filteredList
 			where
 				makeAxiomsOfTerms :: AxiomTag -> TermNode -> [TermNode] -> [AxiomData]
-				makeAxiomsOfTerms    tag         left        rightList  =
+				makeAxiomsOfTerms    tag         right        leftList  =
 					let
-						axiomsWithTag = map createAxiomWithTag $ combinatorialProduct [left] rightList
+						axiomsWithTag = map createAxiomWithTag $ combinatorialProduct [right] leftList
 					in
 						axiomsWithTag
 					where
 						createAxiomWithTag :: (TermNode, TermNode) -> AxiomData
-						createAxiomWithTag (left, right) = AxiomData tag left right
+						createAxiomWithTag (right, left) = AxiomData tag left right
 
 				excessiveCrossoverOfTermsAsSet :: [TermNode] -> Set.Set TermNode
 				excessiveCrossoverOfTermsAsSet terms =

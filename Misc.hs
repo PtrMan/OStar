@@ -1,6 +1,7 @@
 module Misc where
 
 import qualified Data.List as List
+import qualified Data.Set as Set
 
 -- enumerates all values from 0 to 1-count
 enumerateInt :: Int -> [Int]
@@ -18,3 +19,6 @@ combinatorialProduct    inputA inputB =
 	where
 		singleProduct :: [a] -> b -> [(a, b)]
 		singleProduct list element = map (\x -> (x, element)) list
+
+
+removeMultipleElements list = Set.toList $ Set.fromList list
