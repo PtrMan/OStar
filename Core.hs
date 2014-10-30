@@ -5,6 +5,7 @@ import qualified System.Random as Random
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.List as List
+
 import Control.Exception
 import Data.Typeable
 
@@ -14,6 +15,7 @@ import Item
 import AxiomTag
 import Misc
 
+import qualified AStar as AStar
 
 data AxiomData = AxiomData {
 	tag :: AxiomTag, -- tau
@@ -137,6 +139,110 @@ rewriteTryToApplyAxiom    computationContext              (AxiomData Equal axiom
 rewriteTryToApplyAxiom computationContext (AxiomData _ _ _) applyedTerm = MatchError
 
 
+
+
+
+
+-- TODO MEDIUM PERFORMANCE< rewriteTryToApplyAxiomWithAStar and agentComputationWithAStar should use a common datastructure for more performance? >
+
+-- throws the exception VariableNameNotFoundException
+rewriteTryToApplyAxiomWithAStar :: Maybe Agent -> AxiomData                           -> TermNode    -> MatchResult TermNode
+-- required for the rewriting, because else we can't rewrite fro example
+-- 1
+-- with the axiom (Type, 1, Number)
+rewriteTryToApplyAxiomWithAStar    (Just _)                        (AxiomData Type axiomT  axiomTTick)    applyedTerm
+	| axiomT == applyedTerm = Success axiomTTick
+	| True                  = TypeCheckFailure
+
+rewriteTryToApplyAxiomWithAStar    computationContext              (AxiomData Equal axiomT axiomTTick)    applyedTerm =
+	-- first we try to map the axiom to the term
+	let
+		isComputationContextSet = case computationContext of
+			Just _ -> True
+			Nothing -> False
+
+		matchingResult = tryToAssignTermNodeToVariables axiomT Map.empty applyedTerm
+		in case matchingResult of
+			MatchError           -> MatchError
+			MultipleValuesForKey -> MultipleValuesForKey
+			Success matchingVariables ->
+				let
+					-- PERFORMANCE< of the computationContext is Nothing this doesn't need to be calculated, we do it non the less because it simplifies the code >
+					rewrittenOrginalTerms = rewriteTermNode matchingVariables applyedTerm
+					rewrittenOrginalTermsTypeValid = isTypeValid rewrittenOrginalTerms applyedTerm
+
+					rewrittenTerm = rewriteTermNode matchingVariables axiomTTick
+					rewrittenTermTypeValid = isTypeValid rewrittenTerm axiomTTick
+
+					-- combine the A-Computation results for the type checks of the rewrite of the orginal term and the rewritten term
+					existsValidTypePath = rewrittenOrginalTermsTypeValid && rewrittenTermTypeValid
+				in
+					if existsValidTypePath then
+						Success rewrittenTerm
+					else
+						TypeCheckFailure
+				where
+					-- if it is needed, this checks if there is a A-Computation for the "Type"
+					isTypeValid :: TermNode -> TermNode -> Bool
+					isTypeValid resultTerm sourceTerm =
+							if (not isComputationContextSet) then
+								True
+							else
+								let
+									Just computationContextAgent = computationContext
+									(isReachableByTypeOnly, _) = agentComputationWithAStar False (Just Type) computationContextAgent resultTerm sourceTerm
+								in
+									isReachableByTypeOnly
+
+					--rewrite variables termData = rewriteTermNode variables (Branch termData)
+
+					-- function which does the rewriting
+					-- replaces TermNodes of variables with the corresponding stored TermNodes in "variables"
+					--                 map of variables           TermNode
+					rewriteTermNode :: Map.Map String TermNode -> TermNode -> TermNode
+					rewriteTermNode variables  (Branch (TermData nodeTag leftTermNode rightTermNode))   = Branch( TermData nodeTag (rewriteTermNode variables leftTermNode) (rewriteTermNode variables rightTermNode))
+					rewriteTermNode variables  (LeafVariable (VariableData variableDelta variableTau))  = lookupAndReturnTermNode variables variableDelta
+					rewriteTermNode variables  (LeafTag leafTag)                                        = LeafTag leafTag
+					
+
+					-- function which looks up the variable and throws a exception if it wasn't found
+					lookupAndReturnTermNode variables variableDelta =
+						case (Map.lookup variableDelta variables) of
+							Just termNode -> termNode
+							Nothing -> throw (VariableNameNotFoundException variableDelta)
+	where
+		-- tries to match a Term with Variables to a Term
+		-- assigns varibles to the mtched (sub)terms
+		--                                ruleTerm    input variableMapping      applyedTerm    result mapping
+		tryToAssignTermNodeToVariables :: TermNode -> Map.Map String TermNode -> TermNode    -> MatchResult (Map.Map String TermNode)
+
+		-- for a leafTag in the rule we do nothing
+		tryToAssignTermNodeToVariables (LeafTag leafTag) map _ = Success map
+
+		-- usual exact match
+		tryToAssignTermNodeToVariables (LeafVariable (VariableData variableDelta _)) variableMapping applyedTerm
+			| Map.notMember variableDelta variableMapping = Success (Map.insert variableDelta applyedTerm variableMapping)
+		    | True                                        = MultipleValuesForKey
+
+		-- for tree banches it is required to apply it to both sides of the branch
+		tryToAssignTermNodeToVariables (Branch (TermData ruleNodeTag ruleLeft ruleRight)) variableMapping (Branch (TermData applyedNodeTag applyedLeft applyedRight) )
+			| ruleNodeTag == applyedNodeTag =
+				let
+					afterLeft = tryToAssignTermNodeToVariables ruleLeft variableMapping applyedLeft
+				in case afterLeft of
+					Success resultMap    -> tryToAssignTermNodeToVariables ruleRight resultMap applyedRight
+					MatchError           -> MatchError
+					MultipleValuesForKey -> MultipleValuesForKey
+
+		-- if all other matches fail we return a match error
+		tryToAssignTermNodeToVariables _ _ _ = MatchError
+
+rewriteTryToApplyAxiomWithAStar computationContext (AxiomData _ _ _) applyedTerm = MatchError
+
+
+
+
+
 -- definition 10
 -- Termsize
 getTermSizeForAxiom :: AxiomData -> Int
@@ -224,38 +330,146 @@ agentComputation    checkTypes    axiomTagFilter    random           (Agent agen
 						convertSuccessfulMatchResultToTerm :: MatchResult TermNode -> TermNode
 						convertSuccessfulMatchResultToTerm (Success term) = term
 
--- Definition 13 (Item Computation)
-doesAgentComputeItem :: Random.StdGen -> Agent -> Item -> Bool
-doesAgentComputeItem random agent (Item itemTag t1 t2 _) =
+agentComputationWithAStar :: Bool       -> Maybe AxiomTag  -> Agent -> TermNode   -> TermNode -> (Bool, [TermNode])
+agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm     goalTerm =
 	let
-		agentComputationResult = agentComputation True (Just itemTag) random agent t1
-		t2ContainedInAgentComputationResult = t2 `List.elem` agentComputationResult
+		(Agent agentT agentC agentWorkingMemoryCapacity agentAssimilationCapacity agentAccommodationCapacity) = agent
+
+		usedAxioms = case axiomTagFilter of 
+			Just filteredTag -> List.filter (axiomFilterHelper filteredTag) (Set.toList agentT)
+			Nothing -> (Set.toList agentT)
+
+		-- first we build a list of all possible transitions
+		-- TODO< should actually be incorperated into an custom A* algorithm because it could save a lot of time >
+		allPossibleTransitions = getAllPossibleTransitionsOfTerms agentAssimilationCapacity agentWorkingMemoryCapacity usedAxioms
+
+		aStarGraphFunctionWithTransistions = aStarGraphFunction allPossibleTransitions
+
+		aStarSearchResult = AStar.aStar aStarGraphFunctionWithTransistions aStarDistanceFunction aStarheuristicDistanceFunction aStarIsGoal startTerm
+	in case aStarSearchResult of
+		Just optiomalSolution -> (True, [startTerm] ++ optiomalSolution)
+		Nothing -> (False, [startTerm])
+	where
+		getAllPossibleTransitionsOfTerms :: Int                       -> Int                        -> [AxiomData] -> [(TermNode, TermNode)]
+		getAllPossibleTransitionsOfTerms    agentAssimilationCapacity    agentWorkingMemoryCapacity     usedAxioms =
+			let
+				-- list of nodes for which the possible transistions with the application of axioms is left to be checked
+				-- the remaining searchdepth is also stored
+				openList = [(startTerm, agentAssimilationCapacity)]
+
+				(_, foundPossibleApplications) = applyWhile applyHelper (openList, []) (usedAxioms, agentWorkingMemoryCapacity)
+			in
+				foundPossibleApplications
+			where
+				-- searches for all possible rewrites of the terms
+				-- this is done until a maximal depth is reached
+				applyHelper :: ([(TermNode, Int)], [(TermNode, TermNode)]) -> ([AxiomData], Int) -> Maybe ([(TermNode, Int)], [(TermNode, TermNode)])
+				applyHelper ([], _) (_, _) = Nothing
+
+				-- we terminate the search for open list elements where the remaining depth is 0
+				applyHelper ((_, 0):remainingOpenList, resultUntilNow) (usedAxioms, agentWorkingMemoryCapacity) = applyHelper (remainingOpenList, resultUntilNow) (usedAxioms, agentWorkingMemoryCapacity)
+
+				applyHelper ((currentOpenListElement, currentRemainingDeep):remainingOpenList, resultUntilNow) (usedAxioms, agentWorkingMemoryCapacity) =
+					let
+						nextRemainingDepth = currentRemainingDeep - 1
+
+						termsAfterApplicationOfTheorems = getResultsOfRewriteWithAxiomsUsingFilter (filterHelper agentWorkingMemoryCapacity) currentOpenListElement usedAxioms
+
+						termTermTransitions = List.zip (List.repeat currentOpenListElement) termsAfterApplicationOfTheorems
+						additionalRemainingOpenList = List.zip termsAfterApplicationOfTheorems (List.repeat nextRemainingDepth)
+					in
+						Just (remainingOpenList ++ additionalRemainingOpenList, termTermTransitions)
+					where
+						-- does ensure that the Term Size is small enought for the agent
+						filterHelper :: Int -> TermNode -> Bool
+						filterHelper maximum appliedTerm = (getTermSize appliedTerm) < maximum
+
+						getResultsOfRewriteWithAxiomsUsingFilter :: (TermNode -> Bool) -> TermNode -> [AxiomData] -> [TermNode]
+						getResultsOfRewriteWithAxiomsUsingFilter filterFunction appliedTerm axioms =
+							let
+								-- try to rewrite the axioms
+								-- [MatchResult TermNode]
+								rewrittenMatchResults = map rewriteHelper (zip axioms (List.repeat appliedTerm))
+
+								-- filter the MatchResults for valid matches and translate to list of terms
+								filteredValidTerms0 = List.filter filterHelper rewrittenMatchResults
+								filteredValidTerms1 = List.map convertSuccessfulMatchResultToTerm filteredValidTerms0
+
+								-- filter with filter
+								filteredValidTerms2 = List.filter filterFunction filteredValidTerms1
+							in
+								filteredValidTerms2
+							where
+								-- helper, tries to rewrite the Term with the axiom
+								-- helper, tries to rewrite the Term with the axiom
+								rewriteHelper :: (AxiomData, TermNode) -> MatchResult TermNode
+								rewriteHelper (axiom, appliedTerm)
+									| checkTypes = rewriteTryToApplyAxiomWithAStar (Just agent) axiom appliedTerm
+									| True       = rewriteTryToApplyAxiomWithAStar Nothing axiom appliedTerm
+
+								filterHelper :: MatchResult TermNode -> Bool
+								filterHelper (Success _) = True
+								filterHelper _ = False
+
+								-- only defined for Success term
+								convertSuccessfulMatchResultToTerm :: MatchResult TermNode -> TermNode
+								convertSuccessfulMatchResultToTerm (Success term) = term
+
+		axiomFilterHelper :: AxiomTag -> AxiomData                    -> Bool
+		axiomFilterHelper    compareTag  (AxiomData compareTag2 _ _ ) =  compareTag == compareTag2
+
+		---------------------------------------------
+		-- these are all helpers for the A* Algorithm
+
+		aStarGraphFunction :: [(TermNode, TermNode)] -> TermNode -> Set.Set TermNode
+		aStarGraphFunction possibleTransitions currentTerm =
+			let
+				listFilteredForCurrentTerms = List.filter filterForCurrentTermAsSource possibleTransitions
+				reachableNodes = List.map getDestinationOfTuple listFilteredForCurrentTerms
+			in
+				Set.fromList reachableNodes
+			where
+				filterForCurrentTermAsSource :: (TermNode, TermNode) -> Bool
+				filterForCurrentTermAsSource (term, _) = term == currentTerm
+
+				getDestinationOfTuple :: (TermNode, TermNode) -> TermNode
+				getDestinationOfTuple (_, destination) = destination
+
+		aStarDistanceFunction :: TermNode -> TermNode -> Int
+		aStarDistanceFunction a b = 1
+
+		aStarheuristicDistanceFunction :: TermNode -> Int
+		aStarheuristicDistanceFunction _ = 0
+
+		aStarIsGoal :: TermNode -> Bool
+		aStarIsGoal term = term == goalTerm
+
+
+
+-- Definition 13 (Item Computation)
+doesAgentComputeItem :: Agent -> Item -> Bool
+doesAgentComputeItem agent (Item itemTag t1 t2 _) =
+	let
+		(doesCompute, _) = agentComputationWithAStar True (Just itemTag) agent t1 t2
 	in
-		t2ContainedInAgentComputationResult
+		doesCompute
 
 -- Definition 14 (Performance)
 calcPerformanceSum :: Random.StdGen -> Agent -> [Item] -> Int
-calcPerformanceSum    random           agent    items  =  List.sum (calcIndividualPerformance random agent items)
+calcPerformanceSum    random           agent    items  =  List.sum (calcIndividualPerformance agent items)
 
+calcPerformanceSumAStar :: Agent -> [Item] -> Int
+calcPerformanceSumAStar    agent    items  =  List.sum (calcIndividualPerformance agent items)
 
-calcIndividualPerformance :: Random.StdGen -> Agent -> [Item] -> [Int]
-calcIndividualPerformance    random           agent    items  =
-	let
-		infiniteListOfRandomGenerators = List.iterate (\x -> snd (Random.split x)) random
-		
-		-- is a list of the scores of the items
-		listOfScoresOfItems = map mapTupleToScore (zip items infiniteListOfRandomGenerators)
-	in
-		listOfScoresOfItems
+calcIndividualPerformance :: Agent -> [Item] -> [Int]
+calcIndividualPerformance    agent    items  =
+		map mapItemToScore items
 	where
-		mapTupleToScore :: (Item, Random.StdGen) -> Int
-		mapTupleToScore (item, random) = mapItemToScore random item
-
 		-- calculates the score of an item
-		mapItemToScore :: Random.StdGen -> Item -> Int
-		mapItemToScore random (Item itemTag t1 t2 itemU)
-			| doesAgentComputeItem random agent (Item itemTag t1 t2 itemU) = itemU
-			| True                                                         = 0
+		mapItemToScore :: Item -> Int
+		mapItemToScore (Item itemTag t1 t2 itemU)
+			| doesAgentComputeItem agent (Item itemTag t1 t2 itemU) = itemU
+			| True                                                  = 0
 
 -- des take a random subtree from treeA and inserts it into a random position in treeB
 -- Definition 15 (Crossover)
@@ -464,7 +678,7 @@ data MatchResult a =
 	| TypeCheckFailure -- the Type checking A-Computation was not successful
 
 
-
+data SideTwist = RightLeft | LeftRight
 
 
 data Agent = Agent {
@@ -636,12 +850,14 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 				makeAxiomsOfTerms :: AxiomTag -> TermNode -> [TermNode] -> [AxiomData]
 				makeAxiomsOfTerms    tag         right        leftList  =
 					let
-						axiomsWithTag = map createAxiomWithTag $ combinatorialProduct [right] leftList
+						axiomsWithTag = (map (createAxiomWithTag RightLeft) (combinatorialProduct [right] leftList)) ++ 
+						                (map (createAxiomWithTag LeftRight) (combinatorialProduct [right] leftList))
 					in
 						axiomsWithTag
 					where
-						createAxiomWithTag :: (TermNode, TermNode) -> AxiomData
-						createAxiomWithTag (right, left) = AxiomData tag left right
+						createAxiomWithTag :: SideTwist -> (TermNode, TermNode) -> AxiomData
+						createAxiomWithTag RightLeft (right, left) = AxiomData tag left right
+						createAxiomWithTag LeftRight (left, right) = AxiomData tag left right
 
 				excessiveCrossoverOfTermsAsSet :: [TermNode] -> Set.Set TermNode
 				excessiveCrossoverOfTermsAsSet terms =
@@ -762,14 +978,14 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 					let
 						unorderedListOfAxiomsAndPerformanceRating = getListOfPerformancesOfAxioms agent allreadyDefinedAxioms random items axioms
 						-- ordering matches with unorderedListOfAxiomsAndPerformanceRating
-						termsizesOfTheories = List.map (\x -> getTermSizeOfTheory (allreadyDefinedAxioms ++ [(fst x)])) unorderedListOfAxiomsAndPerformanceRating
+						termsizesOfTheorems = List.map (\x -> getTermSizeOfTheory (allreadyDefinedAxioms ++ [(fst x)])) unorderedListOfAxiomsAndPerformanceRating
 
 						-- TODO< calculate other criteria and adapt the zip and sort functionality >
 						-- * maximum number of variable tokens
 						-- * minimal number of variable types
 						-- * lexographical as small as possible
 
-						zipedList = List.zip unorderedListOfAxiomsAndPerformanceRating termsizesOfTheories
+						zipedList = List.zip unorderedListOfAxiomsAndPerformanceRating termsizesOfTheorems
 						transformedTupleList = List.map transform zipedList
 
 						-- sort it by the many criteria
@@ -811,7 +1027,7 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 										modifiedAgentT = Set.union agentT (Set.fromList additionalAxioms)
 										modifiedAgent = Agent modifiedAgentT agentC agentWorkingMemoryCapacity agentAssimilationCapacity agentAccommodationCapacity
 									in
-										calcPerformanceSum random modifiedAgent items
+										calcPerformanceSumAStar modifiedAgent items
 
 						transform :: ((AxiomData, Int), Int             ) -> (AxiomData, Int               , Int)
 						transform    ((axiom, rating) , termsizeOfTheory) =  (axiom    , termsizeOfTheory  , rating)
@@ -899,6 +1115,396 @@ occamFunction random ipIn (Agent agentT agentC workingMemoryCapacity assimilatio
 					in
 						Set.union setOfLeft setOfRight
 
+-- TODO< rip out random crap >
+modifiedOccamFunction :: Random.StdGen -> [Item] -> Agent -> Agent
+modifiedOccamFunction    random           ipIn      agent =
+	let
+		(Agent agentT agentC workingMemoryCapacity assimilationCapacity accommodationCapacity) = agent
+
+		-- TODO< remove random >
+		(random3, randomT1) = Random.split random
+
+		-- first we calculate the set of variables in agentC
+		setOfVariables = getAllVariablesAsSetFromTerms agentC
+
+		subtreesFromIn = getAllSubtermFromItems ipIn
+
+		-- replace one ore many leaf nodes of the subtrees by variables setOfVariables
+		zetaAsList = replaceOneOrMoreLeafNodesByRandomVariableFromSet subtreesFromIn setOfVariables random3
+		zetaAsSet = Set.fromList zetaAsList
+
+		-- union for the new agentC agentC and zeta
+		nextAgentC = Set.union agentC zetaAsSet
+
+
+		-- functions which will be executed by tryToFindOptimalCandidatesForDeltaTickTick in succession, if it failed to find any axioms which can be candidates
+		appliedFunctionsForFormingOfDeltaTickTick = [
+			forDeltaTickTickCrossover accommodationCapacity,
+			-- TODO abstraction
+			-- TODO recursion
+			forDeltaTickTickMemorisation ipIn
+			]
+
+		-- Maybe [AxiomData]
+		deltaTickTickAxioms = tryToFindOptimalCandidatesForDeltaTickTick agent ipIn (Set.toList nextAgentC) appliedFunctionsForFormingOfDeltaTickTick
+
+		agentTplus1 = Set.union agentT deltaTickTickAxioms
+		resultAgent = (Agent agentTplus1 nextAgentC workingMemoryCapacity assimilationCapacity accommodationCapacity)
+	in
+		resultAgent
+	where
+		-- this function is used to apply the different kinds of transformations in succession
+		-- so it tries the next kind of transformation if all previous ones failed, etc
+
+		-- this function does
+		-- for each function in the array with functions
+		-- * apply the function to the input terms
+		-- * calculate the performance of the axioms
+		-- * try to up to 3 top candidates (if they are equal)
+
+		-- * if the function does return a result put the result out
+		-- * else try the next function in the list
+		--
+		-- if all functions fail Nothing is returned
+		tryToFindOptimalCandidatesForDeltaTickTick :: Agent -> [Item] -> [TermNode] -> [[TermNode] -> Set.Set AxiomData] -> Set.Set AxiomData
+		tryToFindOptimalCandidatesForDeltaTickTick agent items inputTerms functions =
+			let
+				internalResult = tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms functions
+			in case internalResult of
+				Just axioms -> axioms
+				Nothing -> Set.empty
+			where
+				tryToFindOptimalCandidatesForDeltaTickTickInternal :: Agent -> [Item] -> [TermNode] -> [[TermNode] -> Set.Set AxiomData] -> Maybe (Set.Set AxiomData)
+				
+				-- if no more functions are left we return nothing because the search failed
+				tryToFindOptimalCandidatesForDeltaTickTickInternal _ _ _ [] = Nothing
+
+				tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms (currentFunction:otherFunctions) =
+					let
+						numberOfMaximalCandidates = 3
+
+						workingAxioms = currentFunction inputTerms
+
+						-- PAPERQUOTE< form the set deltaTick, whose axioms satisfy a few additional conditions: e.g. all variables must appear in both terms of the axioms, or not at all >
+						deltaTick = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
+
+						ratedAxioms = rateAxioms [] (Set.toList deltaTick)
+
+						-- sort it by the many criteria
+						sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
+						-- * Performance
+						-- * Size/Complexity
+						-- TODO< calculate other criteria and adapt the zip and sort functionality >
+						-- * maximum number of variable tokens
+						-- * minimal number of variable types
+						-- * lexographical as small as possible
+
+						-- try to find optimal candidates
+						-- (taking first, take tuple of ratings, take all others who have the same rating, limit it to 3)
+						topnEqualCandidatesAsTuple = takeTopNCandidates sortedRatedAxioms
+						topnCandidatesAsTuple = List.take numberOfMaximalCandidates topnEqualCandidatesAsTuple
+						topnCandidates = getAxiomsOfTupleList topnCandidatesAsTuple
+
+						-- if this fails we continue with the otherFunctions (recursivly)
+					in
+						if (List.length topnCandidates) == 0
+						then
+							tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms otherFunctions
+						else
+							Just $ Set.fromList topnCandidates
+					where
+						-- calculates various things of the axioms and maintains the order
+						-- * performance of the agent with each axiom
+						-- * length
+						-- TODO< more >
+						-- result - list of : tuple (added axiom, performance rating of allreadyDefinedAxioms and the added axiom on items, complexity of the axiom)
+						rateAxioms :: [AxiomData]           -> [AxiomData] -> [(AxiomData, Int, Int)]
+						rateAxioms    allreadyDefinedAxioms    axioms      =
+							let
+								-- calculate the performances we would get if we add one axiom to all axioms and do evaluate the performance
+								ratedAxioms = List.map calculatePerformanceAndOtherRatingsOfAxiom axioms
+							in
+								ratedAxioms
+							where
+								calculatePerformanceAndOtherRatingsOfAxiom :: AxiomData -> (AxiomData, Int, Int)
+								calculatePerformanceAndOtherRatingsOfAxiom axiom =
+									let
+										performanceOfAgentWithAxiom = calcPerformanceOfAgentWithAdditionalAxiomsPlusAxiom axiom
+										complexityOfAxiom = getTermSizeForAxiom axiom
+									in
+										(axiom, performanceOfAgentWithAxiom, complexityOfAxiom)
+
+								calcPerformanceOfAgentWithAdditionalAxiomsPlusAxiom :: AxiomData       -> Int
+								calcPerformanceOfAgentWithAdditionalAxiomsPlusAxiom    additionalAxiom =
+									let
+										allAxioms = allreadyDefinedAxioms ++ [additionalAxiom]
+									in
+										calcPerformanceOfAgentWithAdditionalAxioms allAxioms
+
+								calcPerformanceOfAgentWithAdditionalAxioms :: [AxiomData]      -> Int
+								calcPerformanceOfAgentWithAdditionalAxioms    additionalAxioms =
+									let
+										(Agent agentT agentC agentWorkingMemoryCapacity agentAssimilationCapacity agentAccommodationCapacity) = agent
+
+										modifiedAgentT = Set.union agentT (Set.fromList additionalAxioms)
+										modifiedAgent = Agent modifiedAgentT agentC agentWorkingMemoryCapacity agentAssimilationCapacity agentAccommodationCapacity
+									in
+										calcPerformanceSumAStar modifiedAgent items
+
+						sortFunction :: (AxiomData, Int                , Int    ) -> (AxiomData, Int              , Int    ) -> Ordering
+						sortFunction    (_        , termsizeOfTheoryL  , ratingL)    (_        , termsizeOfTheoryR, ratingR)
+							| ratingL > ratingR = GT
+							| termsizeOfTheoryL < termsizeOfTheoryR = GT
+							| ratingL == ratingR && termsizeOfTheoryL == termsizeOfTheoryR = EQ
+							| True = LT
+
+						-- returns the top n candidates which are equal
+						-- handles also the case for no candidates
+						takeTopNCandidates :: [(AxiomData, Int, Int)] -> [(AxiomData, Int, Int)]
+						takeTopNCandidates [] = []
+						takeTopNCandidates candidates =
+							let
+								topCandidate = List.head candidates
+								resultCandidates = List.takeWhile (isRatingEqual topCandidate) candidates
+							in
+								resultCandidates
+							where
+								isRatingEqual :: (AxiomData, Int              , Int    ) -> (AxiomData, Int              , Int    ) -> Bool
+								isRatingEqual    (_        , termsizeOfTheoryL, ratingL)    (_        , termsizeOfTheoryR, ratingR) = termsizeOfTheoryL == termsizeOfTheoryR && ratingL == ratingR
+
+						getAxiomsOfTupleList :: [(AxiomData, Int, Int)] -> [AxiomData]
+						getAxiomsOfTupleList    tupleList               =
+							let
+								result = List.map mapTupleToAxiom tupleList
+							in
+								result
+							where
+								mapTupleToAxiom (axiom, _, _) = axiom
+
+						----------------------------------------------
+						-- filtering main function and filterfunctions
+
+						filterAxiomSetByAdditionalConditions :: [(AxiomData -> Bool)] -> Set.Set AxiomData -> Set.Set AxiomData
+						filterAxiomSetByAdditionalConditions filterFunctions axiomSet =
+							let
+								axiomsAsList = Set.toList axiomSet
+								filteredAxiomsAsList = filter anyFilterHelper axiomsAsList
+								filteredAxiomsAsSet = Set.fromList filteredAxiomsAsList
+							in
+								filteredAxiomsAsSet
+							where
+								-- returns true if any filter returns true
+								anyFilterHelper :: AxiomData -> Bool
+								anyFilterHelper axiom = List.any (\appliedFilterFunction -> appliedFilterFunction axiom) filterFunctions
+
+
+						areAllVariablesApearingOnBothSidesInAxiom :: AxiomData -> Bool
+						areAllVariablesApearingOnBothSidesInAxiom (AxiomData _ t tTick) =
+							let
+								-- get all indices of the leafs which are variables
+								indicesOfVariablesInT = getIndicesOfLeafNodesInTreeWithFilter t isTermLeafAVariable
+								-- fetch all variables in T as list
+								variablesInTAsList = map (\index -> takeNthFromTree index t) indicesOfVariablesInT
+								-- convert to set
+								variablesInTAsSet = Set.fromList variablesInTAsList
+
+								-- do the same for tTick
+								indicesOfVariablesInTTick = getIndicesOfLeafNodesInTreeWithFilter tTick isTermLeafAVariable
+								variablesInTTickAsList = map (\index -> takeNthFromTree index tTick) indicesOfVariablesInTTick
+								variablesInTTickAsSet = Set.fromList variablesInTTickAsList
+
+								-- now we need to intersect the sets and look if no surive
+								intersectedVariables = Set.intersection variablesInTAsSet variablesInTTickAsSet
+								areAllVariablesApearingOnBothSides = Set.size intersectedVariables == 0
+							in
+								areAllVariablesApearingOnBothSides
+							where
+								isTermLeafAVariable :: TermNode -> Bool
+								isTermLeafAVariable (LeafVariable _) = True
+								isTermLeafAVariable _ = False
+
+						areNoVariablesAppearingInAxiom :: AxiomData -> Bool
+						areNoVariablesAppearingInAxiom (AxiomData _ t tTick) = (not (areVariablesAppearingInTerm t)) && (not (areVariablesAppearingInTerm tTick))
+
+
+
+		---------------------------------------------------------------
+		-- Functions used by tryToFindOptimalCandidatesForDeltaTickTick
+		-- which do try to find the best candidates for deltaTickTick
+
+		forDeltaTickTickCrossover :: Int -> [TermNode] -> Set.Set AxiomData
+		forDeltaTickTickCrossover accommodationCapacity nextAgentC =
+			let
+				-- form the crossover
+				-- as described we need to crosover nextAgentC
+				-- the trouble is that it need to be translated to axioms
+				-- we implement here a conversion from the crossover term to the axiom as follows
+				-- create eqal axiom for (left) input term and result term of the crossover
+				-- create type axiom for (left) input term and result term of the crossover
+				-- then filter for the complexity of the resulting axioms
+				
+				-- TODO< apply filter as described in the paper >
+				crossoverResultAxioms = crossoverAndConvertToAxioms accommodationCapacity nextAgentC
+
+				
+				-- paper "iterates over lenths of condidates (1 to D)"
+				-- PAPER ASK< maybe they mean that for the crossover it should iterate over the combinates of the crossover >
+				-- NOTE< we don't have to sort here by anything because tryToFindOptimalCandidatesForDeltaTickTick does it allready >
+
+				-- TODO< crossoverResultAxiomsSorted for deltaTick : filter it according to transistion rule from delta to deltaTick ? >
+				
+			in
+				Set.fromList crossoverResultAxioms
+			where
+				crossoverAndConvertToAxioms :: Int                   -> [TermNode] -> [AxiomData]
+				crossoverAndConvertToAxioms    accommodationCapacity    terms      =
+					let
+						allTermsCrossedOverAsSet = excessiveCrossover terms (accommodationCapacity-1)
+						allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
+
+						unfilteredAxioms = List.concat $ List.concat [
+											(map (\leftTerm -> makeAxiomsOfTerms Equi leftTerm allTermsCrossedOverAsList) terms),
+											(map (\leftTerm -> makeAxiomsOfTerms Type leftTerm allTermsCrossedOverAsList) terms)
+											]
+						
+						filteredList = List.filter filterForMaximalAccommodationCapacity unfilteredAxioms
+					in
+						filteredList
+					where
+						makeAxiomsOfTerms :: AxiomTag -> TermNode -> [TermNode] -> [AxiomData]
+						makeAxiomsOfTerms    tag         right        leftList  =
+							let
+								axiomsWithTag = (map (createAxiomWithTag RightLeft) (combinatorialProduct [right] leftList)) ++ 
+								                (map (createAxiomWithTag LeftRight) (combinatorialProduct [right] leftList))
+							in
+								axiomsWithTag
+							where
+								createAxiomWithTag :: SideTwist -> (TermNode, TermNode) -> AxiomData
+								createAxiomWithTag RightLeft (right, left) = AxiomData tag left right
+								createAxiomWithTag LeftRight (left, right) = AxiomData tag left right
+
+						excessiveCrossoverOfTermsAsSet :: [TermNode] -> Set.Set TermNode
+						excessiveCrossoverOfTermsAsSet terms =
+							let
+								result = Set.unions $ map excessiveCrossoverOfTuple $ combinatorialProduct terms terms
+							in
+								result
+							where
+								excessiveCrossoverOfTuple :: (TermNode, TermNode) -> Set.Set TermNode
+								excessiveCrossoverOfTuple (a, b) = crossoverExcessive a b
+
+						filterForMaximalAccommodationCapacity :: AxiomData -> Bool
+						filterForMaximalAccommodationCapacity axiom = getTermSizeForAxiom axiom <= accommodationCapacity
+
+		forDeltaTickTickMemorisation :: [Item] -> [TermNode] -> Set.Set AxiomData
+		forDeltaTickTickMemorisation items nextAgentC = Set.fromList $ memorizeFromList items
+			where
+				memorizeFromList :: [Item] -> [AxiomData]
+				memorizeFromList items =
+					let
+						listWithMaybeAxioms = map memorize items
+						-- filter
+						listWithFilteredMaybeAxioms = filter filterHelper listWithMaybeAxioms
+						listWithAxioms = map mapHelper listWithFilteredMaybeAxioms
+					in
+						listWithAxioms
+					where
+						filterHelper :: Maybe AxiomData -> Bool
+						filterHelper (Just _) = True
+						filterHelper Nothing = False
+
+						mapHelper :: Maybe AxiomData -> AxiomData
+						mapHelper (Just axiom) = axiom
+
+
+
+		-- returns all variables in allTermsAsSet
+		getAllVariablesAsSetFromTerms :: Set.Set TermNode -> Set.Set VariableData
+		getAllVariablesAsSetFromTerms allTermsAsSet =
+			let
+				allTermsAsList = Set.elems allTermsAsSet
+				listOfSetsOfVariablesFromParameter = map getAllVariablesAsSetFromTerm allTermsAsList
+				result = Set.unions listOfSetsOfVariablesFromParameter
+			in
+				result
+			where
+				getAllVariablesAsSetFromTerm :: TermNode -> Set.Set VariableData
+				getAllVariablesAsSetFromTerm (LeafTag _) = Set.empty
+				getAllVariablesAsSetFromTerm (LeafVariable variable) = Set.fromList [variable]
+
+				getAllVariablesAsSetFromTerm (Branch (TermData _ leftNode rightNode)) =
+					let
+						setOfLeft = getAllVariablesAsSetFromTerm leftNode
+						setOfRight = getAllVariablesAsSetFromTerm rightNode
+					in
+						Set.union setOfLeft setOfRight
+
+		getAllSubtermFromItems :: [Item] -> [TermNode]
+		getAllSubtermFromItems items =
+				Set.toList $ Set.unions $ List.map getAllSubtermsOfItem items
+			where
+				getAllSubtermsOfItem :: Item -> Set.Set TermNode
+				getAllSubtermsOfItem (Item _ t1 t2 _) = Set.union (getAllSubtermAsSet t1) (getAllSubtermAsSet t2)
+
+
+		-- helper function
+		-- NOTE< Set.size setOfVariables == 0 doesn't need any special treetment >
+		replaceOneOrMoreLeafNodesByRandomVariableFromSet :: [TermNode] -> Set.Set VariableData -> Random.StdGen -> [TermNode]
+		replaceOneOrMoreLeafNodesByRandomVariableFromSet subtreesFromIn setOfVariables random =
+			let
+				-- convert it to a list
+				-- this saves some unnecessary conversions in the inner functions
+				setOfVariablesAsList = Set.elems setOfVariables
+				infiniteListOfRandomGenerators = List.iterate (\x -> snd (Random.split x)) random
+			in
+				map mapHelperFunction (List.zip3 subtreesFromIn infiniteListOfRandomGenerators (List.repeat setOfVariablesAsList))
+			where
+				mapHelperFunction :: (TermNode, Random.StdGen, [VariableData]) -> TermNode
+				mapHelperFunction (term, random, setOfVariablesAsList) = replaceOneOrMoreLeafNodesByRandomVariableFromSetForTermNode term setOfVariablesAsList random
+
+				replaceOneOrMoreLeafNodesByRandomVariableFromSetForTermNode :: TermNode -> [VariableData] -> Random.StdGen -> TermNode
+				replaceOneOrMoreLeafNodesByRandomVariableFromSetForTermNode term listOfVariables random =
+					let
+						numberOfLeafnodes = countLeafNodesInTree term
+						(countOfReplacedLeafnodesWithVariables, random2) = Random.randomR (1, numberOfLeafnodes-1) random
+						indicesOfLeafnodes = getIndicesOfLeafNodesInTree term
+						chosenIndicesOfLeafNodes = choseRandomElementsFromList indicesOfLeafnodes countOfReplacedLeafnodesWithVariables random2
+
+						-- generator for an infinite list of different random number generators
+						infiniteListOfRandomGenerators = List.iterate (\x -> snd (Random.split x)) random
+
+						-- iterate over all chosenIndicesOfLeafNodes and call replaceSubtermWithRandomVariableFromSet
+						-- finaly return the result
+						(resultTerm, _) = List.mapAccumL mapAccuFunction term (zip chosenIndicesOfLeafNodes infiniteListOfRandomGenerators)
+					in
+						resultTerm
+					where
+						-- helper function which is used for mapAccumL
+						-- gets as parameters
+						-- ( 1)  current Term Tree Node
+						-- ( 2)  tuple of (Index in Term of the replacement, RNG)
+						--
+						-- result is the Term where it got replaced plus a dummy variable
+						mapAccuFunction :: TermNode -> (Int, Random.StdGen) -> (TermNode, Int)
+						mapAccuFunction term (index, random) =
+							let
+								termWithReplacedLeaf = replaceSubtermWithRandomVariableFromSet term index listOfVariables random
+							in
+								(termWithReplacedLeaf, 0)
+
+						replaceSubtermWithRandomVariableFromSet :: TermNode -> Int -> [VariableData] -> Random.StdGen -> TermNode
+						replaceSubtermWithRandomVariableFromSet term index listOfVariables random
+						    | List.length listOfVariables == 0 = term
+							| True = 
+								let
+									-- choose random Variable from set
+									numberOfElementsInVariableData = List.length listOfVariables
+									(chosenVariableIndex, _) = Random.randomR (0, numberOfElementsInVariableData-1) random
+									chosenVariableData = listOfVariables !! chosenVariableIndex
+
+									resultTerm = replaceNthInTree index (LeafVariable chosenVariableData) term
+								in
+									resultTerm
 
 -- misc helper
 --                             list     numberOfElements    RNG
@@ -953,20 +1559,26 @@ getStringOfItems items =
 test0 randomSeed =
 	let
 		itemListStep1 = [(Item Type (LeafTag "1") (LeafTag "Digit") 1), (Item Type (LeafTag "0") (LeafTag "Digit") 1), (Item Type (LeafTag "2") (LeafTag "Digit") 1)]
-		(resultAgent1, memorizedAxioms1, _, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
+		--(resultAgent1, memorizedAxioms1, _, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
+		resultAgent1 = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 
 		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),     (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
-		(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
+		resultAgent2 = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
+
+		--(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
+		-- TODO
 
 		(Agent agentT agentC _ _ _) = resultAgent2
 	in
-		(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover)
+		--(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover)
+		(agentT, agentC)
 
 -- TODO< zetaAsList must be empty for the example >
 testPrint :: Int -> IO ()
 testPrint randomSeed =
 	let
-		(agentT, agentC, memorizedAxioms1, _, debugTerms, _, _, afterCrossover) = test0 randomSeed
+		--(agentT, agentC, memorizedAxioms1, _, debugTerms, _, _, afterCrossover) = test0 randomSeed
+		(agentT, agentC) = test0 randomSeed
 	in
 		do
 			putStrLn "Agent T [Axioms]"
@@ -985,10 +1597,10 @@ testPrint randomSeed =
 			putStrLn ""
 			putStr (show agentT )
 
-			putStrLn ""
-			putStr (getStringOfTerms (debugTerms))
+			--putStrLn ""
+			--putStr (getStringOfTerms (debugTerms))
 
 			putStrLn "AXIOMS AFTER CROSSOVER"
-			putStr (getStringOfAxioms (Set.toList afterCrossover))
+			--putStr (getStringOfAxioms (Set.toList afterCrossover))
 
 

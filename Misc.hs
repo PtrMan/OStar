@@ -22,3 +22,11 @@ combinatorialProduct    inputA inputB =
 
 
 removeMultipleElements list = Set.toList $ Set.fromList list
+
+applyWhile :: (a -> b -> Maybe a) -> a -> b -> a
+applyWhile operator start passThrough =
+	let
+		result = operator start passThrough
+	in case result of
+		Nothing -> start
+		Just recursiveResult -> applyWhile operator recursiveResult passThrough
