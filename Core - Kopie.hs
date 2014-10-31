@@ -19,10 +19,6 @@ import qualified AStar as AStar
 
 -- TODO< inside evaluation function --- if the performance rating of the top candidates is 0, drop the candidates (return nothing) >
 
--- TODO
--- * check if connection function loops when it sees loops
-
-
 data AxiomData = AxiomData {
 	tag :: AxiomTag, -- tau
 	t :: TermNode,
@@ -1304,10 +1300,10 @@ modifiedOccamFunction    random           ipIn      agent =
 
 						deltaTickDebug = Set.fromList $ List.take 21 $ Set.toList deltaTick2
 
-						ratedAxioms = rateAxioms agent items [] (Set.toList deltaTickDebug)
+						-- DEBUG ratedAxioms = rateAxioms agent items [] (Set.toList deltaTickDebug)
 
 						-- sort it by the many criteria
-						sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
+						-- DEBUG sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
 						-- * Performance
 						-- * Size/Complexity
 						-- TODO< calculate other criteria and adapt the zip and sort functionality >
@@ -1317,17 +1313,19 @@ modifiedOccamFunction    random           ipIn      agent =
 
 						-- try to find optimal candidates
 						-- (taking first, take tuple of ratings, take all others who have the same rating, limit it to 3)
-						topnEqualCandidatesAsTuple = takeTopNCandidates sortedRatedAxioms
-						topnCandidatesAsTuple = List.take numberOfMaximalCandidates topnEqualCandidatesAsTuple
-						topnCandidates = getAxiomsOfTupleList topnCandidatesAsTuple
+						-- DEBUG topnEqualCandidatesAsTuple = takeTopNCandidates sortedRatedAxioms
+						-- DEBUG topnCandidatesAsTuple = List.take numberOfMaximalCandidates topnEqualCandidatesAsTuple
+						-- DEBUG topnCandidates = getAxiomsOfTupleList topnCandidatesAsTuple
 
 						-- if this fails we continue with the otherFunctions (recursivly)
 					in
-						if (List.length topnCandidates) == 0
-						then
-							tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms otherFunctions
-						else
-							Just $ Set.fromList topnCandidates
+						Just deltaTickDebug -- FORDEBUG
+
+						-- DEBUG if (List.length topnCandidates) == 0
+						-- DEBUG then
+						-- DEBUG 	tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms otherFunctions
+						-- DEBUG else
+						-- DEBUG 	Just $ Set.fromList topnCandidates
 					where
 						-- MOVEHERE rateAxioms
 
