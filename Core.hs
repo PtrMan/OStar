@@ -545,6 +545,8 @@ crossoverExcessive treeA treeB =
 
 data Side = LeftSide | RightSide
 
+-- NOTE< not after specification, whole algorithm producesstrange result(s) >
+
 -- does a analyzing excessive crossover
 -- * search for all unique node tags
 -- * get all leafes
@@ -599,6 +601,56 @@ excessiveCrossover terms maximalComplexity =
 				possibleResultTrees = generatePossibleCombinationsOfBiggerTermWithSmallerTerms previousResult leafTerms nodeTags
 			in
 				combinePossibleTermsRecursive (remainingCounter-1) possibleResultTrees leafTerms nodeTags
+
+
+templatedCrossover :: [TermNode] -> Set.Set TermNode
+templatedCrossover terms =
+	let
+		uniqueLeafetagsAsSet = Set.unions $ List.map getAllLeafTagsOfTerm terms
+		uniqueLeafetagsAsList = Set.toList uniqueLeafetagsAsSet
+		uniqueTermTemplatesAsSet = getUniqueTermTemplatesAsSet terms
+		uniqueTermTemplatesAsList = Set.toList uniqueTermTemplatesAsSet
+		
+		uniqueLeafes = List.map getleafWithleafTag uniqueLeafetagsAsList
+
+		allPossibleCombinationsAsList = List.concat $ List.map (getAllPossibleLeafCombinationsOfTerm uniqueLeafes) uniqueTermTemplatesAsList
+		allPossibleCombinationsAsSet = Set.fromList allPossibleCombinationsAsList
+	in
+		allPossibleCombinationsAsSet
+	where
+		getUniqueTermTemplatesAsSet :: [TermNode] -> Set.Set TermNode
+		getUniqueTermTemplatesAsSet terms =
+				Set.fromList $ map getTemplateOfTerm terms
+			where
+				getTemplateOfTerm :: TermNode -> TermNode
+				getTemplateOfTerm (LeafTag _) = LeafTag "@"
+				getTemplateOfTerm (LeafVariable _) = LeafTag "@"
+				getTemplateOfTerm (Branch (TermData tag left right)) =
+					let
+						leftResult = getTemplateOfTerm left
+						rightResult = getTemplateOfTerm right
+					in
+						(Branch (TermData tag leftResult rightResult))
+
+		-- other cases indicate programming error
+		getAllPossibleLeafCombinationsOfTerm :: [TermNode] -> TermNode -> [TermNode]
+		getAllPossibleLeafCombinationsOfTerm uniqueLeafes (LeafTag "@") = uniqueLeafes
+		getAllPossibleLeafCombinationsOfTerm uniqueLeafes (Branch (TermData tag left right)) =
+			let
+				leftResult  = getAllPossibleLeafCombinationsOfTerm uniqueLeafes left
+				rightResult = getAllPossibleLeafCombinationsOfTerm uniqueLeafes right
+
+				combinatesOfLeftAndRight = combinatorialProduct leftResult rightResult
+				result = map (convertTupleToBranch tag) combinatesOfLeftAndRight
+			in
+				result
+			where
+				convertTupleToBranch :: String -> (TermNode, TermNode) -> TermNode
+				convertTupleToBranch tag (left, right) = (Branch (TermData tag left right))
+
+		getleafWithleafTag :: String -> TermNode
+		getleafWithleafTag tag = LeafTag tag
+
 
 -- Definition 16
 -- Abstraction
@@ -1139,7 +1191,7 @@ modifiedOccamFunction    random           ipIn      agent =
 
 		-- functions which will be executed by tryToFindOptimalCandidatesForDeltaTickTick in succession, if it failed to find any axioms which can be candidates
 		appliedFunctionsForFormingOfDeltaTickTick = [
-			forDeltaTickTickCrossover accommodationCapacity,
+			forDeltaTickTickCrossover accommodationCapacity
 			-- TODO abstraction
 			-- TODO recursion
 			forDeltaTickTickMemorisation ipIn
@@ -1352,14 +1404,16 @@ modifiedOccamFunction    random           ipIn      agent =
 				-- NOTE< we don't have to sort here by anything because tryToFindOptimalCandidatesForDeltaTickTick does it allready >
 
 				-- TODO< crossoverResultAxiomsSorted for deltaTick : filter it according to transistion rule from delta to deltaTick ? >
+
+				crossoverResultAfterFilter = List.filter filterIsTransformation crossoverResultAxioms
 				
 			in
-				Set.fromList crossoverResultAxioms
+				Set.fromList crossoverResultAfterFilter
 			where
 				crossoverAndConvertToAxioms :: Int                   -> [TermNode] -> [AxiomData]
 				crossoverAndConvertToAxioms    accommodationCapacity    terms      =
 					let
-						allTermsCrossedOverAsSet = excessiveCrossover terms (accommodationCapacity-1)
+						allTermsCrossedOverAsSet = templatedCrossover terms
 						allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
 
 						unfilteredAxioms = List.concat $ List.concat [
@@ -1395,6 +1449,9 @@ modifiedOccamFunction    random           ipIn      agent =
 
 						filterForMaximalAccommodationCapacity :: AxiomData -> Bool
 						filterForMaximalAccommodationCapacity axiom = getTermSizeForAxiom axiom <= accommodationCapacity
+
+				filterIsTransformation :: AxiomData -> Bool
+				filterIsTransformation (AxiomData _ t tTick) = not (t == tTick)
 
 		forDeltaTickTickMemorisation :: [Item] -> [TermNode] -> Set.Set AxiomData
 		forDeltaTickTickMemorisation items nextAgentC = Set.fromList $ memorizeFromList items
@@ -1562,7 +1619,8 @@ test0 randomSeed =
 		--(resultAgent1, memorizedAxioms1, _, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 		resultAgent1 = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 
-		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),     (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
+		--itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),     (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
+		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1)]
 		resultAgent2 = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
 
 		--(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
@@ -1591,11 +1649,6 @@ testPrint randomSeed =
 			putStr (getStringOfTerms (Set.toList agentC))
 			putStrLn ""
 
-
-
-
-			putStrLn ""
-			putStr (show agentT )
 
 			--putStrLn ""
 			--putStr (getStringOfTerms (debugTerms))
