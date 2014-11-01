@@ -200,11 +200,8 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 				listFilteredForCurrentTerms = List.filter filterForCurrentTermAsSource possibleTransitions
 				reachableNodes = List.map getDestinationOfTuple listFilteredForCurrentTerms
 			in
-				-- HACK< because a function hangs >
-				-- TODO< revert
-				
+				-- NOTE< Set.fromList reachableNodes could also work >
 				Set.difference (Set.fromList reachableNodes) (Set.fromList [currentTerm])
-				-- Set.fromList reachableNodes
 			where
 				filterForCurrentTermAsSource :: (TermNode, TermNode) -> Bool
 				filterForCurrentTermAsSource (term, _) = term == currentTerm
@@ -684,12 +681,14 @@ modifiedOccamFunction    random           ipIn      agent =
 			let
 				numberOfMaximalCandidates = 3
 
+				(Agent agentT agentC workingMemoryCapacity assimilationCapacity accommodationCapacity) = agent
+
 				workingAxioms = currentFunction inputTerms
 
 				-- PAPERQUOTE< form the set deltaTick, whose axioms satisfy a few additional conditions: e.g. all variables must appear in both terms of the axioms, or not at all >
 				deltaTick = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
 				
-				ratedAxioms = rateAxioms agent items [] (Set.toList deltaTick)
+				ratedAxioms = rateAxioms agent items (Set.toList agentT) (Set.toList deltaTick)
 
 				-- sort it by the many criteria
 				sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
@@ -1128,20 +1127,18 @@ getStringOfItems items =
 test0 randomSeed =
 	let
 		itemListStep1 = [(Item Type (LeafTag "1") (LeafTag "Digit") 1), (Item Type (LeafTag "0") (LeafTag "Digit") 1), (Item Type (LeafTag "2") (LeafTag "Digit") 1)]
-		--(resultAgent1, memorizedAxioms1, _, _, _, _, _) = occamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 		(resultAgent1, afterCrossover, _) = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep1 (Agent Set.empty Set.empty 8 10 6)
 
-		--itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),     (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
-		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1)]
-		(resultAgent2, afterCrossover2, tempAxioms) = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
+		itemListStep2 = [(Item Type (LeafTag "1") (LeafTag "Number") 1), (Item Type (Branch (TermData "#" (LeafTag "1") (LeafTag "2"))) (LeafTag "Number") 1),       (Item Type (Branch (TermData "#" (LeafTag "1") (Branch (TermData "#" (LeafTag "2") (LeafTag "1"))))) (LeafTag "Number") (-1))]
+		(resultAgent2, afterCrossover2, _) = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
 
-		--(resultAgent2, debug, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover) = occamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent1
-		-- TODO
+		-- repeat step 2 to learn the 2nd axiom like in the paper
+		(resultAgent3, afterCrossover3, tempAxioms) = modifiedOccamFunction (Random.mkStdGen randomSeed) itemListStep2 resultAgent2
 
 		(Agent agentT agentC _ _ _) = resultAgent2
 	in
 		--(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover)
-		(agentT, agentC, afterCrossover2, tempAxioms)
+		(agentT, agentC, afterCrossover3, tempAxioms)
 
 -- TODO< zetaAsList must be empty for the example >
 testPrint :: Int -> IO ()
@@ -1170,7 +1167,7 @@ testPrint randomSeed =
 
 			putStrLn ""
 			putStrLn "AXIOMS DEBUG"
-			putStrLn (convertAxiomsToString (Set.toList tempAxioms))
+			-----putStrLn (convertAxiomsToString (Set.toList tempAxioms))
 
 
 	where
