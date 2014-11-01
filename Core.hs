@@ -457,7 +457,7 @@ getAllPossibleTransitionsOfTerms    agent    startTerm     checkTypes    agentAs
 					let
 						-- try to rewrite the axioms
 						-- [MatchResult TermNode]
-						rewrittenMatchResults = map (rewriteHelper agent checkTypes) (zip axioms (List.repeat appliedTerm))
+						rewrittenMatchResults = map (rewriteHelper agent False) (zip axioms (List.repeat appliedTerm))
 
 						-- filter the MatchResults for valid matches and translate to list of terms
 						filteredValidTerms0 = List.filter filterHelper rewrittenMatchResults
@@ -488,7 +488,8 @@ getAllPossibleTransitionsOfTerms    agent    startTerm     checkTypes    agentAs
 -- helper, tries to rewrite the Term with the axiom
 rewriteHelper :: Agent -> Bool -> (AxiomData, TermNode) -> MatchResult TermNode
 rewriteHelper agent checkTypes (axiom, appliedTerm)
-	| checkTypes = rewriteTryToApplyAxiomWithAStar (Just agent) axiom appliedTerm
+-- BUGTRACE
+-- | checkTypes = rewriteTryToApplyAxiomWithAStar (Just agent) axiom appliedTerm
 	| True       = rewriteTryToApplyAxiomWithAStar Nothing axiom appliedTerm
 
 
