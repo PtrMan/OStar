@@ -149,7 +149,7 @@ rewriteTryToApplyAxiomWithAStar    computationContext              (AxiomData _ 
 -- definition 10
 -- Termsize
 getTermSizeForAxiom :: AxiomData -> Int
-getTermSizeForAxiom (AxiomData _ t tTick) = (getTermSize t) + (getTermSize tTick)
+getTermSizeForAxiom (AxiomData _ t tTick) = ((getTermSize t) + (getTermSize tTick))
 
 getTermSizeOfTheory :: [AxiomData] -> Int
 getTermSizeOfTheory theory = List.sum (List.map getTermSizeForAxiom theory)
@@ -188,8 +188,6 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 					Just optimalSolution -> (True, [startTerm] ++ optimalSolution)
 					Nothing -> (False, [startTerm])
 	where
-		-- MOVEHERE getAllPossibleTransitionsOfTerms
-
 		axiomFilterHelper :: AxiomTag -> AxiomData                    -> Bool
 		axiomFilterHelper    compareTag  (AxiomData compareTag2 _ _ ) =  compareTag == compareTag2
 
@@ -277,14 +275,14 @@ getAllTransistionsHelper agent (openSet, argumentTransistionSet) (usedAxioms, ag
 					termTermTransitions = List.zip (List.repeat currentOpenSetElement) termsAfterApplicationOfTheorems
 					filteredTermTermTransitions = List.filter termTermTransitionFilter termTermTransitions
 					termTermTransitionsAsSet = Set.fromList filteredTermTermTransitions
-					newTermTermTransitions = Set.difference termTermTransitionsAsSet argumentTransistionSet
+					--newTermTermTransitions = Set.difference termTermTransitionsAsSet argumentTransistionSet
 
 					closedSet = Set.map getFirstTermOfTuple argumentTransistionSet
 					openTerms = Set.difference termsAfterApplicationOfTheoremsAsSet closedSet
 
 					additionalRemainingOpenSet = Set.fromList $ List.zip (Set.toList openTerms) (List.repeat nextRemainingDepth)
 				in
-					getAllTransistionsHelper agent (Set.union remainingOpenSet additionalRemainingOpenSet, termTermTransitionsAsSet) (usedAxioms, agentWorkingMemoryCapacity) -- DEBUG getAllTransistionsHelper (remainingOpenList ++ additionalRemainingOpenList, termTermTransitions) (usedAxioms, agentWorkingMemoryCapacity)
+					getAllTransistionsHelper agent (Set.union remainingOpenSet additionalRemainingOpenSet, Set.union termTermTransitionsAsSet argumentTransistionSet) (usedAxioms, agentWorkingMemoryCapacity)
 			else
 				getAllTransistionsHelper agent (remainingOpenSet, argumentTransistionSet) (usedAxioms, agentWorkingMemoryCapacity)
 		where
@@ -370,26 +368,6 @@ calcIndividualPerformance    agent    items  =
 -- des take a random subtree from treeA and inserts it into a random position in treeB
 -- Definition 15 (Crossover)
 
--- <<works>>
-
-crossover :: Random.StdGen -> TermNode -> TermNode -> TermNode
-
-crossover random treeA treeB =
-	let
-		numberOfItemsInTreeA = countItemsInTree treeA
-		(chosenElementToCutFromA, random2) = Random.randomR (0, numberOfItemsInTreeA-1) random
-
-		-- now we cut a subtree from a tree
-		subtree = takeNthFromTree chosenElementToCutFromA treeA
-
-		numberOfItemsInTreeB = countItemsInTree treeB
-		(chosenElementToInsertIntoB, _) = Random.randomR (0, numberOfItemsInTreeB-1) random2
-
-		replacedTree = replaceNthInTree chosenElementToInsertIntoB subtree treeB
-
-	in
-		replacedTree
-
 -- does a excessive crossover
 -- returns all combinations of crossover which are possible
 crossoverExcessive :: TermNode -> TermNode -> Set.Set TermNode
@@ -427,6 +405,65 @@ crossoverExcessive treeA treeB =
 				applyFunction (func, term) = func term
 
 
+-- NOTE< not after specification, whole algorithm producesstrange result(s) >
+
+-- does a analyzing excessive crossover
+-- * search for all unique node tags
+-- * get all leafes
+-- * recombine branches of unique node tags with all possible instantiations of the saved leaves
+
+excessiveCrossover :: [TermNode] -> Int -> Set.Set TermNode
+excessiveCrossover terms maximalComplexity =
+	let
+		uniqueNodeTagsAsSet = Set.unions $ List.map getUnqiueNodeTagsOfTerm terms
+		uniqueLeafesAsSet = Set.unions $ List.map getAllLeafTagsOfTerm terms
+
+		resultTermsOfOnlyLeafesAsList = List.map createLeafFromTag $ Set.toList uniqueLeafesAsSet
+		uniqueNodeTagsAsList = Set.toList uniqueNodeTagsAsSet
+
+		remainingSteps = quot (maximalComplexity-1) 2 + 1
+		resultAsList = combinePossibleTermsRecursive remainingSteps resultTermsOfOnlyLeafesAsList resultTermsOfOnlyLeafesAsList uniqueNodeTagsAsList
+		resultAsSet = Set.fromList resultAsList
+	in
+		resultAsSet
+	where
+		-- is called iterativly to build bigger and bigger trees, which can be again be combined
+		-- this simplifies the algorithm and saves some calculation-time
+		generatePossibleCombinationsOfBiggerTermWithSmallerTerms :: [TermNode] -> [TermNode] -> [String] -> [TermNode]
+		generatePossibleCombinationsOfBiggerTermWithSmallerTerms biggerList leafList nodeTags = 
+			let
+				result = removeMultipleElements $ List.concat $ List.map generatePossibleCombinationsOfBiggerTermWithSmallerTerm leafList
+			in
+				result
+			where
+				-- uses variables of top function
+				generatePossibleCombinationsOfBiggerTermWithSmallerTerm :: TermNode -> [TermNode]
+				generatePossibleCombinationsOfBiggerTermWithSmallerTerm currentLeaf =
+					let
+						productOfTagAndBiggerTerm = combinatorialProduct biggerList nodeTags
+						resultListForLeft = List.map (\x -> createBranchWithTagAndTerm LeftSide x currentLeaf) productOfTagAndBiggerTerm
+						resultListForRight = List.map (\x -> createBranchWithTagAndTerm RightSide x currentLeaf) productOfTagAndBiggerTerm
+					in
+						resultListForLeft ++ resultListForRight
+					where
+						createBranchWithTagAndTerm :: Side -> (TermNode, String) -> TermNode -> TermNode
+						createBranchWithTagAndTerm LeftSide (a, tag) b = Branch (TermData tag a b)
+						createBranchWithTagAndTerm RightSide (a, tag) b = Branch (TermData tag b a)
+
+		createLeafFromTag :: String -> TermNode
+		createLeafFromTag tag = LeafTag tag
+
+		combinePossibleTermsRecursive :: Int -> [TermNode] -> [TermNode] -> [String] -> [TermNode]
+		combinePossibleTermsRecursive 0 _ _ _ = undefined
+		combinePossibleTermsRecursive 1 previousResult _ _ = previousResult
+		combinePossibleTermsRecursive remainingCounter previousResult leafTerms nodeTags =
+			let
+				possibleResultTrees = generatePossibleCombinationsOfBiggerTermWithSmallerTerms previousResult leafTerms nodeTags
+			in
+				combinePossibleTermsRecursive (remainingCounter-1) possibleResultTrees leafTerms nodeTags
+
+
+
 data Side = LeftSide | RightSide
 
 templatedCrossover :: [TermNode] -> Set.Set TermNode
@@ -442,7 +479,7 @@ templatedCrossover terms =
 		allPossibleCombinationsAsList = List.concat $ List.map (getAllPossibleLeafCombinationsOfTerm uniqueLeafes) uniqueTermTemplatesAsList
 		allPossibleCombinationsAsSet = Set.fromList allPossibleCombinationsAsList
 	in
-		allPossibleCombinationsAsSet
+		trace ("templatedCrossover=== " ++ show allPossibleCombinationsAsSet) allPossibleCombinationsAsSet
 	where
 		getUniqueTermTemplatesAsSet :: [TermNode] -> Set.Set TermNode
 		getUniqueTermTemplatesAsSet terms =
@@ -477,6 +514,12 @@ templatedCrossover terms =
 		getleafWithleafTag :: String -> TermNode
 		getleafWithleafTag tag = LeafTag tag
 
+templatedCrossoverTest :: Set.Set TermNode
+templatedCrossoverTest =
+	let
+		listOfTestTerms = [(LeafTag "0"), (LeafTag "1"), (LeafTag "2"), (LeafTag "Digit"), (LeafTag "Number"), (Branch (TermData "#" (LeafTag "1") (LeafTag "2")))]
+	in
+		templatedCrossover listOfTestTerms
 
 -- Definition 16
 -- Abstraction
@@ -585,7 +628,7 @@ modifiedOccamFunction    random           ipIn      agent =
 
 		-- replace one ore many leaf nodes of the subtrees by variables setOfVariables
 		zetaAsList = replaceOneOrMoreLeafNodesByRandomVariableFromSet subtreesFromIn setOfVariables random3
-		zetaAsSet = Set.fromList zetaAsList
+		zetaAsSet = Set.union (Set.fromList zetaAsList) (Set.fromList subtreesFromIn)
 
 		-- union for the new agentC agentC and zeta
 		nextAgentC = Set.union agentC zetaAsSet
@@ -772,7 +815,8 @@ modifiedOccamFunction    random           ipIn      agent =
 				-- then filter for the complexity of the resulting axioms
 				
 				-- TODO< apply filter as described in the paper >
-				crossoverResultAxioms = crossoverAndConvertToAxioms accommodationCapacity nextAgentC
+				crossoverResultAxioms = crossoverAndConvertToAxiomsWithTemplateStrategy accommodationCapacity nextAgentC
+				--crossoverResultAxioms = crossoverAndConvertToAxiomsWithExcessiveStrategy accommodationCapacity nextAgentC
 
 				
 				-- paper "iterates over lenths of condidates (1 to D)"
@@ -786,8 +830,31 @@ modifiedOccamFunction    random           ipIn      agent =
 			in
 				Set.fromList crossoverResultAfterFilter
 			where
-				crossoverAndConvertToAxioms :: Int                   -> [TermNode] -> [AxiomData]
-				crossoverAndConvertToAxioms    accommodationCapacity    terms      =
+				crossoverAndConvertToAxiomsWithExcessiveStrategy :: Int                   -> [TermNode] -> [AxiomData]
+				crossoverAndConvertToAxiomsWithExcessiveStrategy    accommodationCapacity    terms      =
+					let
+						-- TODO< doesn't work because we are only listing the axioms with the highest complexity >
+						allTermsCrossedOverAsSet = excessiveCrossover terms accommodationCapacity
+						allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
+
+						-- [(TermNode, TermNode)]
+						allCombinationsOfCrossedOverTerms = combinatorialProduct allTermsCrossedOverAsList allTermsCrossedOverAsList
+
+						unfilteredAxioms = List.concat $ List.map getPossibleAxiomsOfTermTuple allCombinationsOfCrossedOverTerms
+
+						filteredList = List.filter filterForMaximalAccommodationCapacity unfilteredAxioms
+					in
+						trace (show terms ++ "\n\nallTermsCrossedOverAsSet===\n" ++ show filteredList) filteredList
+					where
+						getPossibleAxiomsOfTermTuple :: (TermNode, TermNode) -> [AxiomData]
+						getPossibleAxiomsOfTermTuple (a, b) = [AxiomData Equi a b, AxiomData Type a b]
+
+						filterForMaximalAccommodationCapacity :: AxiomData -> Bool
+						filterForMaximalAccommodationCapacity axiom = getTermSizeForAxiom axiom <= accommodationCapacity
+
+
+				crossoverAndConvertToAxiomsWithTemplateStrategy :: Int                   -> [TermNode] -> [AxiomData]
+				crossoverAndConvertToAxiomsWithTemplateStrategy    accommodationCapacity    terms      =
 					let
 						allTermsCrossedOverAsSet = templatedCrossover terms
 						allTermsCrossedOverAsList = Set.toList allTermsCrossedOverAsSet
@@ -1074,7 +1141,7 @@ test0 randomSeed =
 		(Agent agentT agentC _ _ _) = resultAgent2
 	in
 		--(agentT, agentC, memorizedAxioms1, debugSetOfVariables, debugTerms, debug0, nextAgentCDebug, afterCrossover)
-		(agentT, agentC, afterCrossover, tempAxioms)
+		(agentT, agentC, afterCrossover2, tempAxioms)
 
 -- TODO< zetaAsList must be empty for the example >
 testPrint :: Int -> IO ()
@@ -1119,8 +1186,7 @@ testPrint randomSeed =
 				mapHelper (axiom, termsize, rating) = getStringOfAxiom axiom ++ " p=" ++ show termsize ++ " complex=" ++ show rating ++ "\n" 
 
 
-testAgentComputation = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Type (LeafTag "Digit") (LeafTag "Number")), (AxiomData Type (LeafTag "1") (LeafTag "Digit")) ]) (Set.empty) 8 10 6)       (Item Type (LeafTag "1") (LeafTag "Number") 1)
-
+testAgentComputation2 = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Type (LeafTag "1") (LeafTag "Digit")), (AxiomData Type (LeafTag "Digit") (LeafTag "Number")) ]) (Set.empty) 8 10 6)       (Item Type (LeafTag "1") (LeafTag "Number") 1)
 
 
 testAStarForPath = agentComputationWithAStar    True  (Just Type)      (Agent (Set.fromList [(AxiomData Type (LeafTag "Digit") (LeafTag "Number")), (AxiomData Type (LeafTag "1") (LeafTag "Digit")) ]) (Set.empty) 8 10 6)     (LeafTag "1")      (LeafTag "Number") 
