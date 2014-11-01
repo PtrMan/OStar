@@ -9,4 +9,5 @@ data Item = Item {
 	t1 :: TermNode,
 	t2 :: TermNode,
 	utility :: Int
-}
+	}
+		deriving (Show)

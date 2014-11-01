@@ -593,18 +593,27 @@ modifiedOccamFunction    random           ipIn      agent =
 
 		-- functions which will be executed by tryToFindOptimalCandidatesForDeltaTickTick in succession, if it failed to find any axioms which can be candidates
 		appliedFunctionsForFormingOfDeltaTickTick = [
-			forDeltaTickTickCrossover accommodationCapacity,
+			forDeltaTickTickCrossover accommodationCapacity
 			-- TODO abstraction
 			-- TODO recursion
-			forDeltaTickTickMemorisation ipIn
+			--forDeltaTickTickMemorisation ipIn
 			]
 
 		-- DEBUG
 		debugAxiomsAfterCrossover = rateAxioms agent ipIn [] (Set.toList $ forDeltaTickTickCrossover accommodationCapacity (Set.toList nextAgentC))
 
 		-- Maybe [AxiomData]
-		deltaTickTickAxioms = tryToFindOptimalCandidatesForDeltaTickTick agent ipIn (Set.toList nextAgentC) appliedFunctionsForFormingOfDeltaTickTick
+		maybeDeltaTickTickAxioms = tryToFindOptimalCandidatesForDeltaTickTick agent ipIn (Set.toList nextAgentC) appliedFunctionsForFormingOfDeltaTickTick
 
+		-- if we have found solution(s) with crossover, abstraction and recursion we just ake it for deltaTickTickAxioms
+		-- if all else failed we memorize everything
+		deltaTickTickAxioms =
+			case maybeDeltaTickTickAxioms of
+				Just deltaTickTickAxioms2 ->
+					deltaTickTickAxioms2
+				Nothing ->
+					memorizeInductionProblem ipIn
+	
 		agentTplus1 = Set.union agentT deltaTickTickAxioms
 		resultAgent = (Agent agentTplus1 nextAgentC workingMemoryCapacity assimilationCapacity accommodationCapacity)
 	in
@@ -623,129 +632,127 @@ modifiedOccamFunction    random           ipIn      agent =
 		-- * else try the next function in the list
 		--
 		-- if all functions fail Nothing is returned
-		tryToFindOptimalCandidatesForDeltaTickTick :: Agent -> [Item] -> [TermNode] -> [[TermNode] -> Set.Set AxiomData] -> Set.Set AxiomData
-		tryToFindOptimalCandidatesForDeltaTickTick agent items inputTerms functions =
+		tryToFindOptimalCandidatesForDeltaTickTick :: Agent -> [Item] -> [TermNode] -> [[TermNode] -> Set.Set AxiomData] -> Maybe (Set.Set AxiomData)
+
+		-- if no more functions are left we return nothing because the search failed
+		tryToFindOptimalCandidatesForDeltaTickTick _ _ _ [] = Nothing
+
+		tryToFindOptimalCandidatesForDeltaTickTick agent items inputTerms (currentFunction:otherFunctions) =
 			let
-				internalResult = tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms functions
-			in case internalResult of
-				Just axioms -> axioms
-				Nothing -> Set.empty
-			where
-				tryToFindOptimalCandidatesForDeltaTickTickInternal :: Agent -> [Item] -> [TermNode] -> [[TermNode] -> Set.Set AxiomData] -> Maybe (Set.Set AxiomData)
+				numberOfMaximalCandidates = 3
+
+				workingAxioms = currentFunction inputTerms
+
+				-- PAPERQUOTE< form the set deltaTick, whose axioms satisfy a few additional conditions: e.g. all variables must appear in both terms of the axioms, or not at all >
+				deltaTick = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
 				
-				-- if no more functions are left we return nothing because the search failed
-				tryToFindOptimalCandidatesForDeltaTickTickInternal _ _ _ [] = Nothing
+				ratedAxioms = rateAxioms agent items [] (Set.toList deltaTick)
 
-				tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms (currentFunction:otherFunctions) =
+				-- sort it by the many criteria
+				sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
+				-- * Performance
+				-- * Size/Complexity
+				-- TODO< calculate other criteria and adapt the zip and sort functionality >
+				-- * maximum number of variable tokens
+				-- * minimal number of variable types
+				-- * lexographical as small as possible
+
+				-- try to find optimal candidates
+				-- (taking first, take tuple of ratings, take all others who have the same rating, limit it to 3)
+				topnEqualCandidatesAsTuple = takeTopNCandidates sortedRatedAxioms
+				topnCandidatesAsTuple = List.take numberOfMaximalCandidates topnEqualCandidatesAsTuple
+			in
+				if ((List.length topnCandidatesAsTuple) == 0) || (isPerformanceOfFirstCandidateZero topnCandidatesAsTuple)
+				then
+					-- if this fails we continue with the otherFunctions (recursivly)
+					tryToFindOptimalCandidatesForDeltaTickTick agent items inputTerms otherFunctions
+				else
 					let
-						numberOfMaximalCandidates = 3
-
-						workingAxioms = currentFunction inputTerms
-
-						-- PAPERQUOTE< form the set deltaTick, whose axioms satisfy a few additional conditions: e.g. all variables must appear in both terms of the axioms, or not at all >
-						deltaTick = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
-						
-						ratedAxioms = rateAxioms agent items [] (Set.toList deltaTick)
-
-						-- sort it by the many criteria
-						sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
-						-- * Performance
-						-- * Size/Complexity
-						-- TODO< calculate other criteria and adapt the zip and sort functionality >
-						-- * maximum number of variable tokens
-						-- * minimal number of variable types
-						-- * lexographical as small as possible
-
-						-- try to find optimal candidates
-						-- (taking first, take tuple of ratings, take all others who have the same rating, limit it to 3)
-						topnEqualCandidatesAsTuple = takeTopNCandidates sortedRatedAxioms
-						topnCandidatesAsTuple = List.take numberOfMaximalCandidates topnEqualCandidatesAsTuple
 						topnCandidates = getAxiomsOfTupleList topnCandidatesAsTuple
-
-						-- if this fails we continue with the otherFunctions (recursivly)
 					in
-						if (List.length topnCandidates) == 0
-						then
-							tryToFindOptimalCandidatesForDeltaTickTickInternal agent items inputTerms otherFunctions
-						else
-							Just $ Set.fromList topnCandidates
+						Just $ Set.fromList topnCandidates
+			where
+				isPerformanceOfFirstCandidateZero :: [(AxiomData, Int           , Int)] -> Bool
+				isPerformanceOfFirstCandidateZero    list                               =
+					let
+						(_        , performance   , _  ) = (List.head list)
+					in
+						performance == 0
+
+				sortFunction :: (AxiomData, Int           , Int        ) -> (AxiomData, Int         , Int        ) -> Ordering
+				sortFunction    (_        , performanceL  , complexityL)    (_        , performanceR, complexityR)
+					| performanceL > performanceR = GT
+					| complexityL < complexityR = GT
+					| performanceL == performanceR && complexityL == complexityR = EQ
+					| True = LT
+
+				-- returns the top n candidates which are equal
+				-- handles also the case for no candidates
+				takeTopNCandidates :: [(AxiomData, Int, Int)] -> [(AxiomData, Int, Int)]
+				takeTopNCandidates [] = []
+				takeTopNCandidates candidates =
+					let
+						topCandidate = List.head candidates
+						resultCandidates = List.takeWhile (isRatingEqual topCandidate) candidates
+					in
+						resultCandidates
 					where
-						-- MOVEHERE rateAxioms
+						isRatingEqual :: (AxiomData, Int         , Int        ) -> (AxiomData, Int         , Int        ) -> Bool
+						isRatingEqual    (_        , performanceL, complexityL)    (_        , performanceR, complexityR) = performanceL == performanceR && complexityL == complexityR
 
-						sortFunction :: (AxiomData, Int           , Int        ) -> (AxiomData, Int         , Int        ) -> Ordering
-						sortFunction    (_        , performanceL  , complexityL)    (_        , performanceR, complexityR)
-							| performanceL > performanceR = GT
-							| complexityL < complexityR = GT
-							| performanceL == performanceR && complexityL == complexityR = EQ
-							| True = LT
+				getAxiomsOfTupleList :: [(AxiomData, Int, Int)] -> [AxiomData]
+				getAxiomsOfTupleList    tupleList               =
+					let
+						result = List.map mapTupleToAxiom tupleList
+					in
+						result
+					where
+						mapTupleToAxiom (axiom, _, _) = axiom
 
-						-- returns the top n candidates which are equal
-						-- handles also the case for no candidates
-						takeTopNCandidates :: [(AxiomData, Int, Int)] -> [(AxiomData, Int, Int)]
-						takeTopNCandidates [] = []
-						takeTopNCandidates candidates =
-							let
-								topCandidate = List.head candidates
-								resultCandidates = List.takeWhile (isRatingEqual topCandidate) candidates
-							in
-								resultCandidates
-							where
-								isRatingEqual :: (AxiomData, Int         , Int        ) -> (AxiomData, Int         , Int        ) -> Bool
-								isRatingEqual    (_        , performanceL, complexityL)    (_        , performanceR, complexityR) = performanceL == performanceR && complexityL == complexityR
+				----------------------------------------------
+				-- filtering main function and filterfunctions
 
-						getAxiomsOfTupleList :: [(AxiomData, Int, Int)] -> [AxiomData]
-						getAxiomsOfTupleList    tupleList               =
-							let
-								result = List.map mapTupleToAxiom tupleList
-							in
-								result
-							where
-								mapTupleToAxiom (axiom, _, _) = axiom
-
-						----------------------------------------------
-						-- filtering main function and filterfunctions
-
-						filterAxiomSetByAdditionalConditions :: [(AxiomData -> Bool)] -> Set.Set AxiomData -> Set.Set AxiomData
-						filterAxiomSetByAdditionalConditions filterFunctions axiomSet =
-							let
-								axiomsAsList = Set.toList axiomSet
-								filteredAxiomsAsList = filter anyFilterHelper axiomsAsList
-								filteredAxiomsAsSet = Set.fromList filteredAxiomsAsList
-							in
-								filteredAxiomsAsSet
-							where
-								-- returns true if any filter returns true
-								anyFilterHelper :: AxiomData -> Bool
-								anyFilterHelper axiom = List.any (\appliedFilterFunction -> appliedFilterFunction axiom) filterFunctions
+				filterAxiomSetByAdditionalConditions :: [(AxiomData -> Bool)] -> Set.Set AxiomData -> Set.Set AxiomData
+				filterAxiomSetByAdditionalConditions filterFunctions axiomSet =
+					let
+						axiomsAsList = Set.toList axiomSet
+						filteredAxiomsAsList = filter anyFilterHelper axiomsAsList
+						filteredAxiomsAsSet = Set.fromList filteredAxiomsAsList
+					in
+						filteredAxiomsAsSet
+					where
+						-- returns true if any filter returns true
+						anyFilterHelper :: AxiomData -> Bool
+						anyFilterHelper axiom = List.any (\appliedFilterFunction -> appliedFilterFunction axiom) filterFunctions
 
 
-						areAllVariablesApearingOnBothSidesInAxiom :: AxiomData -> Bool
-						areAllVariablesApearingOnBothSidesInAxiom (AxiomData _ t tTick) =
-							let
-								-- get all indices of the leafs which are variables
-								indicesOfVariablesInT = getIndicesOfLeafNodesInTreeWithFilter t isTermLeafAVariable
-								-- fetch all variables in T as list
-								variablesInTAsList = map (\index -> takeNthFromTree index t) indicesOfVariablesInT
-								-- convert to set
-								variablesInTAsSet = Set.fromList variablesInTAsList
+				areAllVariablesApearingOnBothSidesInAxiom :: AxiomData -> Bool
+				areAllVariablesApearingOnBothSidesInAxiom (AxiomData _ t tTick) =
+					let
+						-- get all indices of the leafs which are variables
+						indicesOfVariablesInT = getIndicesOfLeafNodesInTreeWithFilter t isTermLeafAVariable
+						-- fetch all variables in T as list
+						variablesInTAsList = map (\index -> takeNthFromTree index t) indicesOfVariablesInT
+						-- convert to set
+						variablesInTAsSet = Set.fromList variablesInTAsList
 
-								-- do the same for tTick
-								indicesOfVariablesInTTick = getIndicesOfLeafNodesInTreeWithFilter tTick isTermLeafAVariable
-								variablesInTTickAsList = map (\index -> takeNthFromTree index tTick) indicesOfVariablesInTTick
-								variablesInTTickAsSet = Set.fromList variablesInTTickAsList
+						-- do the same for tTick
+						indicesOfVariablesInTTick = getIndicesOfLeafNodesInTreeWithFilter tTick isTermLeafAVariable
+						variablesInTTickAsList = map (\index -> takeNthFromTree index tTick) indicesOfVariablesInTTick
+						variablesInTTickAsSet = Set.fromList variablesInTTickAsList
 
-								-- now we need to intersect the sets and look if no surive
-								intersectedVariables = Set.intersection variablesInTAsSet variablesInTTickAsSet
-								areAllVariablesApearingOnBothSides = Set.size intersectedVariables == 0
-							in
-								areAllVariablesApearingOnBothSides
-							where
-								isTermLeafAVariable :: TermNode -> Bool
-								isTermLeafAVariable (LeafVariable _) = True
-								isTermLeafAVariable _ = False
+						-- now we need to intersect the sets and look if no surive
+						intersectedVariables = Set.intersection variablesInTAsSet variablesInTTickAsSet
+						areAllVariablesApearingOnBothSides = Set.size intersectedVariables == 0
+					in
+						areAllVariablesApearingOnBothSides
+					where
+						isTermLeafAVariable :: TermNode -> Bool
+						isTermLeafAVariable (LeafVariable _) = True
+						isTermLeafAVariable _ = False
 
-						areNoVariablesAppearingInAxiom :: AxiomData -> Bool
-						areNoVariablesAppearingInAxiom (AxiomData _ t tTick) = (not (areVariablesAppearingInTerm t)) && (not (areVariablesAppearingInTerm tTick))
+				areNoVariablesAppearingInAxiom :: AxiomData -> Bool
+				areNoVariablesAppearingInAxiom (AxiomData _ t tTick) = (not (areVariablesAppearingInTerm t)) && (not (areVariablesAppearingInTerm tTick))
 
 
 
@@ -822,8 +829,8 @@ modifiedOccamFunction    random           ipIn      agent =
 				filterIsTransformation :: AxiomData -> Bool
 				filterIsTransformation (AxiomData _ t tTick) = not (t == tTick)
 
-		forDeltaTickTickMemorisation :: [Item] -> [TermNode] -> Set.Set AxiomData
-		forDeltaTickTickMemorisation items nextAgentC = Set.fromList $ memorizeFromList items
+		memorizeInductionProblem :: [Item] -> Set.Set AxiomData
+		memorizeInductionProblem items = trace ("O*Core === MEMORIZE" ++ show items) Set.fromList $ memorizeFromList items
 			where
 				memorizeFromList :: [Item] -> [AxiomData]
 				memorizeFromList items =
@@ -1113,6 +1120,7 @@ testPrint randomSeed =
 
 
 testAgentComputation = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Type (LeafTag "Digit") (LeafTag "Number")), (AxiomData Type (LeafTag "1") (LeafTag "Digit")) ]) (Set.empty) 8 10 6)       (Item Type (LeafTag "1") (LeafTag "Number") 1)
+
 
 
 testAStarForPath = agentComputationWithAStar    True  (Just Type)      (Agent (Set.fromList [(AxiomData Type (LeafTag "Digit") (LeafTag "Number")), (AxiomData Type (LeafTag "1") (LeafTag "Digit")) ]) (Set.empty) 8 10 6)     (LeafTag "1")      (LeafTag "Number") 
