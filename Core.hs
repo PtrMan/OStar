@@ -15,6 +15,8 @@ import Item
 import AxiomTag
 import Misc
 
+import Debug.Trace
+
 import qualified AStar as AStar
 
 -- TODO< inside evaluation function --- if the performance rating of the top candidates is 0, drop the candidates (return nothing) >
@@ -173,17 +175,17 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 		-- TODO< should actually be incorperated into an custom A* algorithm because it could save a lot of time >
 		allPossibleTransitions = getAllPossibleTransitionsOfTerms agent startTerm checkTypes agentAssimilationCapacity agentWorkingMemoryCapacity usedAxioms
 
-		aStarGraphFunctionWithTransistions = aStarGraphFunction allPossibleTransitions
+		aStarGraphFunctionWithTransitions = aStarGraphFunction allPossibleTransitions
 	in
 		if (List.length allPossibleTransitions) == 0
 		then
 			(False, [])
 		else
 			let
-				aStarSearchResult = AStar.aStar aStarGraphFunctionWithTransistions aStarDistanceFunction aStarheuristicDistanceFunction aStarIsGoal startTerm
+				aStarSearchResult = AStar.aStar aStarGraphFunctionWithTransitions aStarDistanceFunction aStarheuristicDistanceFunction aStarIsGoal startTerm
 			in
 				case aStarSearchResult of
-					Just optiomalSolution -> (True, [startTerm] ++ optiomalSolution)
+					Just optimalSolution -> (True, [startTerm] ++ optimalSolution)
 					Nothing -> (False, [startTerm])
 	where
 		-- MOVEHERE getAllPossibleTransitionsOfTerms
@@ -234,90 +236,107 @@ getAllPossibleTransitionsOfTerms    agent    startTerm     checkTypes    agentAs
 	let
 		-- list of nodes for which the possible transistions with the application of axioms is left to be checked
 		-- the remaining searchdepth is also stored
-		openList = [(startTerm, agentAssimilationCapacity)]
+		openSet = Set.fromList [(startTerm, agentAssimilationCapacity)]
 
-		(_, foundPossibleApplications) = applyHelper (openList, Set.empty) (usedAxioms, agentWorkingMemoryCapacity) -- DEBUGGING applyWhile applyHelper (openList, []) (usedAxioms, agentWorkingMemoryCapacity)
+		foundPossibleApplications = getAllTransistionsHelperProxy agent (openSet, Set.empty) (usedAxioms, agentWorkingMemoryCapacity)
 	in
 		Set.toList foundPossibleApplications
-	where
-		-- DEBUGGING
-		--applyHelperTest ::  ([(TermNode, Int)], [(TermNode, TermNode)]) -> ([AxiomData], Int) -> ([(TermNode, Int)], [(TermNode, TermNode)])
-		--applyHelperTest current passThrough =
-		--	let
-		--		applyResult = applyHelper current passThrough
-
-		--	in case applyResult of
-		--		Nothing -> current
-		--		Just resultOfCall -> applyHelperTest resultOfCall passThrough
 
 
-		-- searches for all possible rewrites of the terms
-		-- this is done until a maximal depth is reached
-		applyHelper :: ([(TermNode, Int)], Set.Set (TermNode, TermNode)) -> ([AxiomData], Int) -> ([(TermNode, Int)], Set.Set (TermNode, TermNode))
-		applyHelper ([], resultThusFar) _ = ([], resultThusFar)
 
-		-- we terminate the search for open list elements where the remaining depth is 0
-		applyHelper ((_, 0):remainingOpenList, resultUntilNow) (usedAxioms, agentWorkingMemoryCapacity) = applyHelper (remainingOpenList, resultUntilNow) (usedAxioms, agentWorkingMemoryCapacity)
+getAllTransistionsHelperProxy :: Agent -> (Set.Set (TermNode, Int), Set.Set (TermNode, TermNode)) -> ([AxiomData], Int) -> Set.Set (TermNode, TermNode)
+getAllTransistionsHelperProxy agent initial passthrough =
+	let
+		(_, result) = (getAllTransistionsHelper agent initial passthrough)
+	in 
+		result
 
-		applyHelper ((currentOpenListElement, currentRemainingDeep):remainingOpenList, _) (usedAxioms, agentWorkingMemoryCapacity) =
-			let
-				nextRemainingDepth = currentRemainingDeep - 1
+-- TODO< maybe too inefficient >
 
-				termsAfterApplicationOfTheorems = getResultsOfRewriteWithAxiomsUsingFilter (filterHelper agentWorkingMemoryCapacity) currentOpenListElement usedAxioms
+-- searches for all possible rewrites of the terms
+-- this is done until a maximal depth is reached
+getAllTransistionsHelper :: Agent -> (Set.Set (TermNode, Int), Set.Set (TermNode, TermNode)) -> ([AxiomData], Int) -> (Set.Set (TermNode, Int), Set.Set (TermNode, TermNode))
+getAllTransistionsHelper agent (openSet, argumentTransistionSet) (usedAxioms, agentWorkingMemoryCapacity)
+	| Set.size openSet == 0 = (openSet, argumentTransistionSet)
+	| True =
+		let
+			currentOpenElement = List.head $ Set.toList openSet
+			remainingOpenSet = Set.difference openSet $ Set.fromList [currentOpenElement]
+			
+			(currentOpenSetElement, currentRemainingDeep) = currentOpenElement
+		in
+			if not (currentRemainingDeep == 0)
+			then
+				let
+					nextRemainingDepth = currentRemainingDeep - 1
 
-				termTermTransitions = List.zip (List.repeat currentOpenListElement) termsAfterApplicationOfTheorems
-				filteredTermTermTransitions = List.filter termTermTransitionFilter termTermTransitions
-				termTermTransitionsAsSet = Set.fromList filteredTermTermTransitions
-				additionalRemainingOpenList = List.zip termsAfterApplicationOfTheorems (List.repeat nextRemainingDepth)
+					termsAfterApplicationOfTheorems = getResultsOfRewriteWithAxiomsUsingFilter (filterHelper agentWorkingMemoryCapacity) currentOpenSetElement usedAxioms
+					termsAfterApplicationOfTheoremsAsSet = Set.fromList termsAfterApplicationOfTheorems
 
-				(_, recursiveResult) = applyHelper (remainingOpenList ++ additionalRemainingOpenList, termTermTransitionsAsSet) (usedAxioms, agentWorkingMemoryCapacity)
-			in
-				([], Set.union termTermTransitionsAsSet recursiveResult) -- DEBUG applyHelper (remainingOpenList ++ additionalRemainingOpenList, termTermTransitions) (usedAxioms, agentWorkingMemoryCapacity)
-			where
-				-- does ensure that the Term Size is small enought for the agent
-				filterHelper :: Int -> TermNode -> Bool
-				filterHelper maximum appliedTerm = (getTermSize appliedTerm) < maximum
 
-				getResultsOfRewriteWithAxiomsUsingFilter :: (TermNode -> Bool) -> TermNode -> [AxiomData] -> [TermNode]
-				getResultsOfRewriteWithAxiomsUsingFilter filterFunction appliedTerm axioms =
-					let
-						-- try to rewrite the axioms
-						-- [MatchResult TermNode]
-						rewrittenMatchResults = map (rewriteHelper agent False) (zip axioms (List.repeat appliedTerm))
+					termTermTransitions = List.zip (List.repeat currentOpenSetElement) termsAfterApplicationOfTheorems
+					filteredTermTermTransitions = List.filter termTermTransitionFilter termTermTransitions
+					termTermTransitionsAsSet = Set.fromList filteredTermTermTransitions
+					newTermTermTransitions = Set.difference termTermTransitionsAsSet argumentTransistionSet
 
-						-- filter the MatchResults for valid matches and translate to list of terms
-						filteredValidTerms0 = List.filter filterHelper rewrittenMatchResults
-						filteredValidTerms1 = List.map convertSuccessfulMatchResultToTerm filteredValidTerms0
+					closedSet = Set.map getFirstTermOfTuple argumentTransistionSet
+					openTerms = Set.difference termsAfterApplicationOfTheoremsAsSet closedSet
 
-						-- filter with filter
-						filteredValidTerms2 = List.filter filterFunction filteredValidTerms1
-					in
-						filteredValidTerms2
-					where
-						-- MOVEHERE rewriteHelper
+					additionalRemainingOpenSet = Set.fromList $ List.zip (Set.toList openTerms) (List.repeat nextRemainingDepth)
+				in
+					getAllTransistionsHelper agent (Set.union remainingOpenSet additionalRemainingOpenSet, termTermTransitionsAsSet) (usedAxioms, agentWorkingMemoryCapacity) -- DEBUG getAllTransistionsHelper (remainingOpenList ++ additionalRemainingOpenList, termTermTransitions) (usedAxioms, agentWorkingMemoryCapacity)
+			else
+				getAllTransistionsHelper agent (remainingOpenSet, argumentTransistionSet) (usedAxioms, agentWorkingMemoryCapacity)
+		where
+			-- does ensure that the Term Size is small enought for the agent
+			filterHelper :: Int -> TermNode -> Bool
+			filterHelper maximum appliedTerm = (getTermSize appliedTerm) < maximum
 
-						filterHelper :: MatchResult TermNode -> Bool
-						filterHelper (Success _) = True
-						filterHelper _ = False
+			-- used for getting the closed set
+			getFirstTermOfTuple :: (TermNode, TermNode) -> TermNode
+			getFirstTermOfTuple (a, b) = a 
 
-						-- only defined for Success term
-						convertSuccessfulMatchResultToTerm :: MatchResult TermNode -> TermNode
-						convertSuccessfulMatchResultToTerm (Success term) = term
+			getResultsOfRewriteWithAxiomsUsingFilter :: (TermNode -> Bool) -> TermNode -> [AxiomData] -> [TermNode]
+			getResultsOfRewriteWithAxiomsUsingFilter filterFunction appliedTerm axioms =
+				let
 
-				termTermTransitionFilter :: (TermNode, TermNode) -> Bool
-				termTermTransitionFilter (a, b) = not $ a == b
+
+					-- try to rewrite the axioms
+					-- [MatchResult TermNode]
+					-- TODO DEBUG< parameter check types >
+					rewrittenMatchResults = map (rewriteHelper agent False) (zip axioms (List.repeat appliedTerm))
+
+					-- filter the MatchResults for valid matches and translate to list of terms
+					filteredValidTerms0 = List.filter filterHelper rewrittenMatchResults
+					filteredValidTerms1 = List.map convertSuccessfulMatchResultToTerm filteredValidTerms0
+
+					-- filter with filter
+					filteredValidTerms2 = List.filter filterFunction filteredValidTerms1
+				in
+					filteredValidTerms2
+				where
+					-- MOVEHERE rewriteHelper
+
+					filterHelper :: MatchResult TermNode -> Bool
+					filterHelper (Success _) = True
+					filterHelper _ = False
+
+					-- only defined for Success term
+					convertSuccessfulMatchResultToTerm :: MatchResult TermNode -> TermNode
+					convertSuccessfulMatchResultToTerm (Success term) = term
+
+			termTermTransitionFilter :: (TermNode, TermNode) -> Bool
+			termTermTransitionFilter (a, b) = not $ a == b
 
 
 
 
 -- helper, tries to rewrite the Term with the axiom
 -- helper, tries to rewrite the Term with the axiom
-rewriteHelper :: Agent -> Bool -> (AxiomData, TermNode) -> MatchResult TermNode
-rewriteHelper agent checkTypes (axiom, appliedTerm)
--- BUGTRACE
--- | checkTypes = rewriteTryToApplyAxiomWithAStar (Just agent) axiom appliedTerm
+rewriteHelper :: Agent -> Bool       -> (AxiomData, TermNode   ) -> MatchResult TermNode
+rewriteHelper    agent    checkTypes    (axiom    , appliedTerm)
 	| True       = rewriteTryToApplyAxiomWithAStar Nothing axiom appliedTerm
-
+	| checkTypes = rewriteTryToApplyAxiomWithAStar (Just agent) axiom appliedTerm
 
 
 
@@ -624,17 +643,9 @@ modifiedOccamFunction    random           ipIn      agent =
 						workingAxioms = currentFunction inputTerms
 
 						-- PAPERQUOTE< form the set deltaTick, whose axioms satisfy a few additional conditions: e.g. all variables must appear in both terms of the axioms, or not at all >
-						deltaTick2 = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
-
-						-- for testing
-						-- 20 goes
-						-- 21 hangs
-						-- 25 hangs
-						deltaTick = deltaTick2 -- Set.fromList [(AxiomData Equi (LeafTag "0")       (Branch (TermData "#" (LeafTag "Digit") (LeafTag "1"))))]-----INVALID Set.fromList $ List.take 21 $ Set.toList deltaTick2
-
-						deltaTickDebug = Set.fromList $ List.take 21 $ Set.toList deltaTick2
-
-						ratedAxioms = rateAxioms agent items [] (Set.toList deltaTickDebug)
+						deltaTick = filterAxiomSetByAdditionalConditions [areAllVariablesApearingOnBothSidesInAxiom, areNoVariablesAppearingInAxiom] workingAxioms
+						
+						ratedAxioms = rateAxioms agent items [] (Set.toList deltaTick)
 
 						-- sort it by the many criteria
 						sortedRatedAxioms = List.reverse (List.sortBy sortFunction ratedAxioms)
@@ -1111,6 +1122,8 @@ testGetAllPossibleTransistion = getAllPossibleTransitionsOfTerms (Agent (Set.fro
 testRewritehelper = rewriteHelper (Agent (Set.fromList [(AxiomData Type (LeafTag "Digit") (LeafTag "Number")), (AxiomData Type (LeafTag "1") (LeafTag "Digit")) ]) (Set.empty) 8 10 6)                    True               ((AxiomData Type (LeafTag "1") (LeafTag "Digit")), (LeafTag "1"))
 
 main = testPrint 5
+
+rateSingleAxiomA = rateSingleAxiom (AxiomData Equi (LeafTag "0") (LeafTag "1"))
 
 
 rateSingleAxiom axiom =
