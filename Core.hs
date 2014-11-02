@@ -403,6 +403,7 @@ crossoverExcessive treeA treeB =
 
 
 -- NOTE< not after specification, whole algorithm producesstrange result(s) >
+-- TODO< maybe use the helper in misc to get all possible combinations >
 
 -- does a analyzing excessive crossover
 -- * search for all unique node tags

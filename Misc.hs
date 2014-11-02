@@ -23,10 +23,31 @@ combinatorialProduct    inputA inputB =
 
 removeMultipleElements list = Set.toList $ Set.fromList list
 
-applyWhile :: (a -> b -> Maybe a) -> a -> b -> a
-applyWhile operator start passThrough =
-	let
-		result = operator start passThrough
-	in case result of
-		Nothing -> start
-		Just recursiveResult -> applyWhile operator recursiveResult passThrough
+getAllCombinations :: [a] -> Int -> [[a]]
+getAllCombinations list remaining
+	| remaining == 1 = map (\x -> [x]) list
+	| remaining > 1  =
+		let
+			newRemaining = remaining - 1
+			recursiveResult = getAllCombinations list newRemaining
+
+			combined = combinatorialProduct list recursiveResult
+
+			result = map convertTupleToList combined
+		in
+			result
+		where
+			convertTupleToList :: (a, [a]) -> [a]
+			convertTupleToList (first, list) = [first] ++ list
+
+			b :: [[a]] -> a -> [[a]]
+			b lists prefix =
+				map convertTupleToList $ zip (List.repeat prefix) lists
+
+
+-- a b 2 -> a a b b
+repeatN :: [a] -> Int -> [a]
+repeatN list times = List.concat $ List.map (repeatNInternal times) list
+--	where
+--		repeatNInternal x = List.take times $ List.repeat x
+repeatNInternal times x = List.take times $ List.repeat x
