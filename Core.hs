@@ -60,7 +60,7 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 
 		-- first we build a list of all possible transitions
 		-- TODO< should actually be incorperated into an custom A* algorithm because it could save a lot of time >
-		allPossibleTransitions = getAllPossibleTransitionsOfTerms agent checkTypes agentAssimilationCapacity agentWorkingMemoryCapacity usedAxioms
+		allPossibleTransitions = getAllPossibleTransitionsOfTerms agent checkTypes agentAssimilationCapacity agentWorkingMemoryCapacity usedAxioms startTerm
 
 		aStarGraphFunctionWithTransitions = aStarGraphFunction allPossibleTransitions
 	in
@@ -72,7 +72,7 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 				aStarSearchResult = AStar.aStar aStarGraphFunctionWithTransitions aStarDistanceFunction aStarheuristicDistanceFunction aStarIsGoal startTerm
 			in
 				case aStarSearchResult of
-					Just optimalSolution -> trace (show allPossibleTransitions) (True, [startTerm] ++ optimalSolution)
+					Just optimalSolution -> (True, [startTerm] ++ optimalSolution)
 					Nothing -> (False, [startTerm])
 	where
 		axiomFilterHelper :: AxiomTag -> AxiomData                    -> Bool
@@ -113,14 +113,11 @@ agentComputationWithAStar    checkTypes    axiomTagFilter     agent    startTerm
 
 
 
-getAllPossibleTransitionsOfTerms :: Agent -> Bool       -> Int                       -> Int                        -> [AxiomData] -> [(TermNode, TermNode)]
-getAllPossibleTransitionsOfTerms    agent    checkTypes    agentAssimilationCapacity    agentWorkingMemoryCapacity     usedAxioms
+getAllPossibleTransitionsOfTerms :: Agent -> Bool       -> Int                       -> Int                        -> [AxiomData] -> TermNode -> [(TermNode, TermNode)]
+getAllPossibleTransitionsOfTerms    agent    checkTypes    agentAssimilationCapacity    agentWorkingMemoryCapacity     usedAxioms    startTerm
 	| List.length usedAxioms == 0 = []
 	| True =
 		let
-			startTermAxiom = List.head usedAxioms
-			(AxiomData _ startTerm _) = startTermAxiom
-
 			-- list of nodes for which the possible transistions with the application of axioms is left to be checked
 			-- the remaining searchdepth is also stored
 			openSet = Set.fromList [(startTerm, agentAssimilationCapacity)]
@@ -243,6 +240,14 @@ doesAgentComputeItem_test_Positive_A = doesAgentComputeItem (Agent (Set.fromList
 
 -- this should not compute
 doesAgentComputeItem_test_Negative_B = not (doesAgentComputeItem (Agent (Set.fromList [(AxiomData Type (LeafTag "0") (LeafTag "2")),(AxiomData Type (LeafTag "2") (LeafTag "1")),(AxiomData Type (LeafTag "2") (LeafTag "Digit"))]) Set.empty 8 10 6 ) (Item Type (LeafTag "1") (LeafTag "Digit") 1))
+
+doesAgentComputeItem_test_A0 = not ( doesAgentComputeItem (Agent (Set.fromList [(AxiomData Equi (LeafTag "Digit") (LeafTag "1")),(AxiomData Type (LeafTag "1") (LeafTag "2")),(AxiomData Type (LeafTag "2") (LeafTag "Digit"))]) Set.empty 8 10 6 ) (Item Type (LeafTag "0") (LeafTag "Digit") 1))
+doesAgentComputeItem_test_A1 = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Equi (LeafTag "Digit") (LeafTag "1")),(AxiomData Type (LeafTag "1") (LeafTag "2")),(AxiomData Type (LeafTag "2") (LeafTag "Digit"))]) Set.empty 8 10 6 ) (Item Type (LeafTag "1") (LeafTag "Digit") 1)
+doesAgentComputeItem_test_A2 = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Equi (LeafTag "Digit") (LeafTag "1")),(AxiomData Type (LeafTag "1") (LeafTag "2")),(AxiomData Type (LeafTag "2") (LeafTag "Digit"))]) Set.empty 8 10 6 ) (Item Type (LeafTag "2") (LeafTag "Digit") 1)
+
+-- sjould be positive
+doesAgentComputeItem_test_B0 = doesAgentComputeItem (Agent (Set.fromList [(AxiomData Type (LeafTag "0") (LeafTag "Digit")),(AxiomData Type (LeafTag "1") (LeafTag "Digit")),(AxiomData Type (LeafTag "2") (LeafTag "Digit"))]) Set.empty 8 10 6 ) (Item Type (LeafTag "2") (LeafTag "Digit") 1)
+
 
 doesAgentComputeItem :: Agent -> Item -> Bool
 doesAgentComputeItem agent (Item itemTag t1 t2 _) =
