@@ -8,16 +8,19 @@ import qualified Data.List as List
 
 import VariableData
 
+-- placeholders are used to indicate points where stuff can be appended/replaced
 data TermNode =
 	LeafTag {leafTag :: String} |
 	LeafVariable {variable :: VariableData} |
-	Branch {tree :: TermData}
+	Branch {tree :: TermData} |
+	Placeholder
 		deriving (Ord, Eq)
 
 instance Show TermNode where
   show (LeafTag x) = "<LeafTag " ++ show x ++ ">"
   show (LeafVariable x) = "<LeafVariable " ++ show x ++ ">"
   show (Branch x)    = "<Branch " ++ show x ++ ">"
+  show (Placeholder) = "<Placeholder>"
 
 data TermData = TermData { nodeTag :: String
 						 ,  left :: TermNode

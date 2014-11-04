@@ -1,7 +1,7 @@
 module Item where
 
 import Term
-import AxiomTag
+import Axiom
 
 -- TODO< left and right can also be terms >
 data Item = Item {
